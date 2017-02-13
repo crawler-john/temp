@@ -1,0 +1,2666 @@
+/*
+ * control_client.c
+ * EMA_ECU远程控制程序
+ * */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/ioctl.h>
+#include <sys/types.h>
+#include <netinet/in.h>
+#include <time.h>
+#include <sys/time.h>
+#include <termios.h>
+#include <errno.h>
+#include <netdb.h>
+#include <unistd.h>
+#include "sqlite3.h"
+
+#define MSGVERSION 13
+#define DEBUG
+//#define DEBUGLOG
+int TimeOut = 10;
+int Minutes = 15;
+char ecuid[13] = {'\0'};
+
+void printmsg(char *msg)		//打印字符串
+{
+#ifdef DEBUG
+	printf("control_client: %s!\n", msg);
+#endif
+#ifdef DEBUGLOG
+	FILE *fp;
+
+	fp = fopen("/home/control_client.log", "a");
+	if(fp)
+	{
+		fprintf(fp, "control_client: %s!\n", msg);
+		fclose(fp);
+	}
+#endif
+}
+
+void print2msg(char *msg1, char *msg2)		//打印两个字符串
+{
+#ifdef DEBUG
+	printf("control_client: %s: %s\n", msg1, msg2);
+#endif
+#ifdef DEBUGLOG
+	FILE *fp;
+
+	fp = fopen("/home/control_client.log", "a");
+	if(fp)
+	{
+		fprintf(fp, "control_client: %s: %s\n", msg1, msg2);
+		fclose(fp);
+	}
+#endif
+}
+
+void printdecmsg(char *msg, int data)		//打印整形数据
+{
+#ifdef DEBUG
+	printf("control_client: %s: %d!\n", msg, data);
+#endif
+#ifdef DEBUGLOG
+	FILE *fp;
+
+	fp = fopen("/home/control_client.log", "a");
+	if(fp)
+	{
+		fprintf(fp, "control_client: %s: %d!\n", msg, data);
+		fclose(fp);
+	}
+#endif
+}
+
+void printhexmsg(char *msg, char *data, int size)		//打印十六进制数据
+{
+#ifdef DEBUG
+	int i;
+
+	printf("control_client: %s: ", msg);
+	for (i = 0; i < size; i++)
+		printf("%X, ", data[i]);
+	printf("\n");
+#endif
+#ifdef DEBUGLOG
+	FILE *fp;
+	int j;
+
+	fp = fopen("/home/control_client.log", "a");
+	if(fp)
+	{
+		fprintf(fp, "control_client: %s: ", msg);
+		for(j=0; j<size; j++)
+		fprintf(fp, "%X, ", data[j]);
+		fprintf(fp, "\n");
+		fclose(fp);
+	}
+#endif
+}
+
+void getcurrenttime(char curtime[])
+{
+	time_t tm;
+	struct tm record_time;
+
+	time(&tm);
+	memcpy(&record_time, localtime(&tm), sizeof(record_time));
+	sprintf(curtime, "%04d%02d%02d%02d%02d%02d",
+			record_time.tm_year + 1900,
+			record_time.tm_mon + 1,
+			record_time.tm_mday,
+			record_time.tm_hour,
+			record_time.tm_min,
+			record_time.tm_sec);
+}
+
+void writecurrenttime(void)
+{
+	time_t tm;
+	struct tm record_time;
+	char curtime[20] = { '\0' };
+
+	time(&tm);
+	memcpy(&record_time, localtime(&tm), sizeof(record_time));
+	sprintf(curtime, "%04d-%02d-%02d %02d:%02d:%02d",
+			record_time.tm_year + 1900,
+			record_time.tm_mon + 1,
+			record_time.tm_mday,
+			record_time.tm_hour,
+			record_time.tm_min,
+			record_time.tm_sec);
+	print2msg("connect_time", curtime);
+}
+
+void deletechar(char ch, char *string)
+{
+	int i;
+	while (ch == string[0])
+	{
+		for (i = 0; i < strlen(string); i++)
+		{
+			string[i] = string[i + 1];
+		}
+	}
+}
+
+int randvalue(void)
+{
+	int i;
+
+	srand((unsigned)time(NULL));
+	i = rand()%2;
+//	printdecmsg("Randvalue", i);
+
+	return i;
+}
+
+int create_socket(void)
+{
+	int sockfd;
+	if (-1 == (sockfd = socket(AF_INET, SOCK_STREAM, 0)))
+	{
+		printmsg("Failed to create socket");
+		perror("socket");
+		exit(1);
+	}
+	printdecmsg("Create socket successfully!  socket", sockfd);
+	return sockfd;
+}
+
+int connect_socket(int sockfd)
+{
+	char buf[1024] = {'\0'};
+	char connecttime[20] = {'\0'};
+	struct sockaddr_in serv_addr;
+	struct hostent *host;
+	char Domain[1024]={'\0'};
+	char IP[20] = {'\0'};
+	int Port[2]={8997, 8997};
+	int rand = randvalue();
+	int i;
+	FILE *fp;
+
+	if (NULL == (fp = fopen("/etc/yuneng/controlclient.conf", "r")))
+	{
+		perror("controlclient.conf");
+		return -1;
+	}
+	else
+	{
+		while(1)
+		{
+			memset(buf, '\0', sizeof(buf));
+			fgets(buf, sizeof(buf), fp);
+			if(!strlen(buf))
+				break;
+			if(!strncmp(buf, "Timeout", 7))
+			{
+				TimeOut = atoi(&buf[8]);
+			}
+			if(!strncmp(buf, "Report_Interval", 15))
+			{
+				Minutes = atoi(&buf[16]);
+			}
+			if(!strncmp(buf, "Domain", 6))
+			{
+				sscanf(&buf[7], "%[^\n]", Domain);
+			}
+			if(!strncmp(buf, "IP", 2))
+			{
+				sscanf(&buf[3], "%[^\n]", IP);
+			}
+			if(!strncmp(buf, "Port1", 5))
+			{
+				Port[0]=atoi(&buf[6]);
+			}
+			if(!strncmp(buf, "Port2", 5))
+			{
+				Port[1]=atoi(&buf[6]);
+			}
+		}
+		fclose(fp);
+	}
+//	printf("Timeout:%d\nReport_Interval:%d\nPort1:%d\nPort2:%d\n",TimeOut,Minutes,Port[0],Port[1]);
+
+	if(!strlen(Domain) && !strlen(IP))
+	{
+		strcpy(Domain, "ecu.apsema.com");
+	}
+	if(strlen(Domain))
+	{
+		if(NULL == (host = gethostbyname(Domain)))
+			{
+				herror("gethostbyname");
+				printmsg("Resolve domain failure");
+				if(!strlen(IP))
+					strcpy(IP, "60.190.131.190");
+			}
+			else
+			{
+				memset(IP, '\0', sizeof(IP));
+				inet_ntop(AF_INET, *host->h_addr_list, IP, 32);
+			}
+	}
+	memset(buf, '\0', sizeof(buf));
+	sprintf(buf,"IP Address: %s  Port1: %d  Port2: %d", IP,Port[0],Port[1]);
+	printmsg(buf);
+
+	serv_addr.sin_family = AF_INET;
+	serv_addr.sin_port = htons(Port[rand]);
+	serv_addr.sin_addr.s_addr = inet_addr(IP);
+	bzero(&(serv_addr.sin_zero), 8);
+	for(i=0; i<3; i++)
+	{
+		if (-1 == connect(sockfd, (struct sockaddr *) &serv_addr, sizeof(struct sockaddr)))
+		{
+			memset(buf, '\0', sizeof(buf));
+			sprintf(buf,"Failed to connect to EMA %s:%d", IP, Port[rand]);
+			printmsg(buf);
+			perror("connect");
+		}
+		else
+		{
+			memset(buf, '\0', sizeof(buf));
+			sprintf(buf,"Connected to ->  %s:%d  successfully", IP, Port[rand]);
+			printmsg(buf);
+			writecurrenttime();
+			return 0;
+		}
+	}
+	return -1;
+}
+
+
+int response_inverter_info(int fd_sock, char *timestamp)		//A102
+{
+	FILE *fp;
+	char sql[100] = { '\0' };
+	sqlite3 *db;
+	char **azResult;
+	int nrow, ncolumn;
+	char *zErrMsg = 0;
+	char length[4] = { '\0' };
+	char record[65535] = { '\0' };
+	char buf[100] = { '\0' };
+	int ECU_Inverter_Num = 0;
+	int i;
+
+	printmsg("response_inverter_info: Start");
+	/*Head*/
+	strcpy(record, "APS13AAAAAA102AAA0");
+	/*ECU Message*/
+	//ECU_ID
+	if (NULL == (fp = fopen("/etc/yuneng/ecuid.conf", "r")))
+	{
+		perror("ecuid.conf");
+		return -1;
+	}
+	fgets(buf, 12 + 1, fp);
+	fclose(fp);
+	fp = NULL;
+	strcat(record, buf);
+//	print2msg("ECU_ID", buf);
+	memset(buf, '\0', sizeof(buf));
+	//ECU_Version+Length
+	if (NULL == (fp = fopen("/etc/yuneng/version.conf", "r")))
+	{
+		perror("version.conf");
+		return -1;
+	}
+	fgets(buf, 50, fp);
+	if (10 == buf[strlen(buf) - 1])
+	{
+		buf[strlen(buf) - 1] = '\0';
+	}
+	fclose(fp);
+	fp = NULL;
+	sprintf(length, "%02d", strlen(buf));
+	strcat(record, length);
+	strcat(record, buf);
+	memset(length, '\0', sizeof(length));
+	memset(buf, '\0', sizeof(buf));
+	//打开数据库
+	if (sqlite3_open("/home/database.db", &db))
+	{
+		fprintf(stderr, "Can't open database: %s\n", sqlite3_errmsg(db));
+		sqlite3_close(db);
+		return -1;
+	}
+	//ECU_Inverter_Num
+	strcpy(sql, "SELECT id FROM id ");
+	for (i = 0; i < 3; i++)
+	{
+		if (SQLITE_OK == sqlite3_get_table(db, sql, &azResult, &nrow, &ncolumn,	&zErrMsg))
+		{
+			memset(sql, '\0', sizeof(sql));
+			if (nrow)
+			{
+				ECU_Inverter_Num = nrow;
+			}
+			sprintf(buf, "%d", ECU_Inverter_Num);
+			for (i = 3; i > strlen(buf); i--)
+			{
+				strcat(record, "A");
+			}
+			strcat(record, buf);
+		//	print2msg("ECU_Inverter_Num", buf);
+			memset(buf, '\0', sizeof(buf));
+			//Timestamp
+			strcat(record, timestamp);
+		//	print2msg("Timestamp", timestamp);
+			//ECU_Msg_End
+			strcat(record, "END");
+			/*Inverter Message*/
+			for (i = 0; i < ECU_Inverter_Num; i++)
+			{
+				//Inverter_ID
+				sprintf(buf, "%s", azResult[i + 1]);
+				strcat(record, buf);
+		//		print2msg("Inverter_ID", buf);
+				memset(buf, '\0', sizeof(buf));
+				//Inverter_Type
+				strcpy(buf, "00");
+		//		print2msg("Inverter_Type", buf);
+				strcat(record, buf);
+				memset(buf, '\0', sizeof(buf));
+				//Inverter_version
+				strcpy(buf, "00000");
+		//		print2msg("Inverter_version", buf);
+				strcat(record, buf);
+				memset(buf, '\0', sizeof(buf));
+				//Inverter_Msg_End
+				strcat(record, "END");
+			}
+			sqlite3_free_table(azResult);
+			break;
+		}
+		sqlite3_free_table(azResult);
+	}
+
+	sprintf(buf, "%d", strlen(record));
+	for (i = 5; i > strlen(buf); i--)
+	{
+		strncpy(&record[10 - i], "A", 1);
+	}
+	strncpy(&record[10 - i], buf, i);
+	memset(buf, '\0', sizeof(buf));
+	print2msg("Sent", record);
+	strcat(record, "\n");
+	for (i = 0; i < 3; i++)
+	{
+		if (-1 != send(fd_sock, record, strlen(record), 0))
+		{
+			printmsg("response_inverter_info: End");
+			return 0;
+		}
+	}
+	printmsg("response_version_mac: send faild");
+	return -1;
+}
+
+int set_inverter_id(int fd_sock, char *readbuff)		//A103
+{
+	FILE *fp;
+	char sql[100] = { '\0' };
+	sqlite3 *db;
+	char **azResult;
+	int nrow, ncolumn, tmp;
+	char *zErrMsg = 0;
+	char record[65535] = { '\0' };
+	char buf[100] = { '\0' };
+	char timestamp[15] = { '\0' };
+	char inverter_id[10][13] = { '\0' };
+	int flag = 0, num = 0, ack_flag = 0, i, j;
+
+	printmsg("set_inverter_id: Start");
+	//FLAG
+	strncpy(buf, &readbuff[30], 1);
+	flag = atoi(buf);
+	memset(buf, '\0', sizeof(buf));
+	//ECU_Inverter_Num
+	strncpy(buf, &readbuff[31], 3);
+	for (i = 0; i < strlen(buf); i++)
+	{
+		if ('A' == buf[i])
+			buf[i] = '0';
+	}
+	num = atoi(buf);
+	memset(buf, '\0', sizeof(buf));
+	//Timestamp
+	strncpy(timestamp, &readbuff[34], 14);
+	//Inverter_ID
+	for (i = 0; i < num; i++)
+	{
+		strncpy(inverter_id[i], &readbuff[51 + i * 15], 12);
+	}
+	/*配置处理*/
+	if (sqlite3_open("/home/database.db", &db))
+	{
+		fprintf(stderr, "Can't open database: %s\n", sqlite3_errmsg(db));
+		sqlite3_close(db);
+		ack_flag = 2;
+	}
+	else
+	{
+		switch (flag) {
+			case 0: {
+				//0清除所有逆变器ID
+				strcpy(sql, "DELETE FROM id");
+				sqlite3_exec(db, sql, 0, 0, &zErrMsg);
+				memset(sql, '\0', sizeof(sql));
+				printmsg("Delete all ID");
+				break;
+			}
+			case 1: {
+				//1添加新的逆变器ID
+				for (i = 0; i < num; i++)
+				{
+					sprintf(sql, "SELECT id FROM id WHERE id='%s' ", inverter_id[i]);
+					for (j = 0; j < 3; j++)
+					{
+						if (SQLITE_OK == sqlite3_get_table(db, sql, &azResult, &nrow, &ncolumn, &zErrMsg))
+						{
+							memset(sql, '\0', sizeof(sql));
+							if (nrow)
+							{
+								print2msg("The ID is already exists", inverter_id[i]);
+								ack_flag = 2;
+							}
+							else
+							{
+								sprintf(sql, "INSERT INTO \"id\" VALUES(%d,'%s',0)", nrow+1, inverter_id[i]);
+								sqlite3_exec(db, sql, 0, 0, &zErrMsg);
+								memset(sql, '\0', sizeof(sql));
+								print2msg("Add ID", inverter_id[i]);
+							}
+							sqlite3_free_table(azResult);
+							break;
+						}
+						sqlite3_free_table(azResult);
+					}
+				}
+				break;
+			}
+			case 2: {
+				//2删除部分逆变器ID
+				for (i = 0; i < num; i++)
+				{
+					sprintf(sql, "SELECT id FROM id WHERE id='%s' ", inverter_id[i]);
+					for (j = 0; j < 3; j++)
+					{
+						if (SQLITE_OK == sqlite3_get_table(db, sql, &azResult, &nrow, &ncolumn, &zErrMsg))
+						{
+							memset(sql, '\0', sizeof(sql));
+							if (!nrow)
+							{
+								print2msg("No such ID", inverter_id[i]);
+								ack_flag = 2;
+							}
+							else
+							{
+								sprintf(sql, "DELETE FROM id WHERE id=%s", inverter_id[i]);
+								sqlite3_exec(db, sql, 0, 0, &zErrMsg);
+								memset(sql, '\0', sizeof(sql));
+								print2msg("Delete ID", inverter_id[i]);
+							}
+							sqlite3_free_table(azResult);
+							break;
+						}
+						sqlite3_free_table(azResult);
+					}
+				}
+				break;
+			}
+			default: {
+				ack_flag = 1;
+				break;
+			}
+		}
+	}
+	sqlite3_close(db);
+	/*Head*/
+	strcpy(record, "APS13AAA52A100AAA0");
+	/*EMA_ECU_ACK*/
+	//ECU_ID
+	if (NULL == (fp = fopen("/etc/yuneng/ecuid.conf", "r")))
+	{
+		perror("ecuid.conf");
+		return -1;
+	}
+	fgets(buf, 12 + 1, fp);
+	fclose(fp);
+	fp = NULL;
+	strcat(record, buf);
+	memset(buf, '\0', sizeof(buf));
+	sprintf(buf, "A103%s%dEND", timestamp, ack_flag);
+	strcat(record, buf);
+	memset(buf, '\0', sizeof(buf));
+	print2msg("Sent", record);
+	strcat(record, "\n");
+	for (i = 0; i < 3; i++)
+	{
+		if (-1 != send(fd_sock, record, strlen(record), 0))
+		{
+			printmsg("set_inverter_id: End");
+			return 0;
+		}
+	}
+	printmsg("set_inverter_id: send faild");
+	return -1;
+}
+
+int response_time_zone(int fd_sock, char *timestamp)		//A104
+{
+	FILE *fp;
+	char record[65535] = { '\0' };
+	char buf[100] = { '\0' };
+	int i;
+
+	/*Head*/
+	strcpy(record, "APS13AAAAAA104AAA0");
+	printmsg("response_time_zone: Start");
+	//ECU_ID
+	if (NULL == (fp = fopen("/etc/yuneng/ecuid.conf", "r")))
+	{
+		perror("ecuid.conf");
+		return -1;
+	}
+	fgets(buf, 12 + 1, fp);
+	fclose(fp);
+	fp = NULL;
+	strcat(record, buf);
+//	print2msg("ECU_ID", buf);
+	memset(buf, '\0', sizeof(buf));
+	//ECU_Local_DateTime
+	getcurrenttime(buf);
+	strcat(record, buf);
+	writecurrenttime();
+	memset(buf, '\0', sizeof(buf));
+	//Timestamp
+	strcat(record, timestamp);
+//	print2msg("Timestamp", timestamp);
+	//ECU_TIMEZONE
+	if (NULL == (fp = fopen("/etc/yuneng/timezone.conf", "r")))
+	{
+		perror("timezone.conf");
+		return -1;
+	}
+	fgets(buf, 50, fp);
+	if (10 == buf[strlen(buf) - 1])
+	{
+		buf[strlen(buf) - 1] = '\0';
+	}
+	fclose(fp);
+	fp = NULL;
+	strcat(record, buf);
+//	print2msg("ECU_TIMEZONE", buf);
+	memset(buf, '\0', sizeof(buf));
+	//ECU_Msg_End	
+	strcat(record, "END");
+
+	sprintf(buf, "%d", strlen(record));
+	for (i = 5; i > strlen(buf); i--)
+	{
+		strncpy(&record[10 - i], "A", 1);
+	}
+	strncpy(&record[10 - i], buf, i);
+	memset(buf, '\0', sizeof(buf));
+	print2msg("Sent", record);
+	strcat(record, "\n");
+	for (i = 0; i < 3; i++)
+	{
+		if (-1 != send(fd_sock, record, strlen(record), 0))
+		{
+			printmsg("response_time_zone: End");
+			return 0;
+		}
+	}
+	printmsg("response_version_mac: send faild");
+	return -1;
+}
+
+int set_time_zone(int fd_sock, char*readbuff)		//A105
+{
+	FILE *fp;
+	char record[65535] = { '\0' };
+	char buf[100] = { '\0' };
+	char timestamp[15] = { '\0' };
+	char timezone[50] = { '\0' };
+	int ack_flag = 0, i;
+
+	printmsg("set_time_zone: Start");
+
+	//Timestamp
+	strncpy(timestamp, &readbuff[30], 14);
+	//ECU_TIMEZONE
+	strcpy(buf, &readbuff[44]);
+	strncpy(timezone, buf, strlen(buf) - 3);
+	memset(buf, '\0', sizeof(buf));
+	/*配置处理*/
+	snprintf(buf, sizeof(buf), "cp /usr/share/zoneinfo/%s /etc/localtime", timezone);
+	if (!system(buf))
+	{
+		print2msg("set timezone successfully",timezone);
+		//ECU_TIMEZONE
+		if (NULL == (fp = fopen("/etc/yuneng/timezone.conf", "w")))
+		{
+			perror("timezone.conf");
+			ack_flag = 2;
+			printmsg("save timezone failed");
+		}
+		else
+		{
+			fputs(timezone, fp);
+			fclose(fp);
+			fp = NULL;
+		}
+	}
+	else
+	{
+		ack_flag = 1;
+		printmsg("set timezone failed");
+	}
+	memset(buf, '\0', sizeof(buf));
+	/*Head*/
+	strcpy(record, "APS13AAA52A100AAA0");
+	/*EMA_ECU_ACK*/
+	//ECU_ID
+	if (NULL == (fp = fopen("/etc/yuneng/ecuid.conf", "r")))
+	{
+		perror("ecuid.conf");
+		return -1;
+	}
+	fgets(buf, 12 + 1, fp);
+	fclose(fp);
+	fp = NULL;
+	strcat(record, buf);
+	memset(buf, '\0', sizeof(buf));
+	sprintf(buf, "A105%s%dEND", timestamp, ack_flag);
+	strcat(record, buf);
+	memset(buf, '\0', sizeof(buf));
+	print2msg("Sent", record);
+	strcat(record, "\n");
+	for (i = 0; i < 3; i++)
+	{
+		if (-1 != send(fd_sock, record, strlen(record), 0))
+		{
+			printmsg("set_time_zone: End");
+			return 0;
+		}
+	}
+	printmsg("set_time_zone: send faild");
+	return -1;
+}
+
+int response_network_info(int fd_sock, char *timestamp)		//A106
+{
+	FILE *fp;
+	char record[65535] = { '\0' };
+	char buf[100] = { '\0' };
+	int Comm_Cfg_Num = 2;
+	int Comm_Cfg_Type = 2;
+	int Socket_Type = 0;
+	char domain[50] = { '\0' };
+	char ip[50] = { '\0' };
+	char port1[6] = { '\0' };
+	char port2[6] = { '\0' };
+	char Timeout[4] = { '\0' };
+	char Report_Interval[3] = { '\0' };
+	int i;
+
+	printmsg("response_network_info: Start");
+	/*Head*/
+	strcpy(record, "APS13AAAAAA106AAA0");
+	/*ECU Message*/
+	//ECU_ID
+	if (NULL == (fp = fopen("/etc/yuneng/ecuid.conf", "r")))
+	{
+		perror("ecuid.conf");
+		Comm_Cfg_Num--;
+	}
+	else
+	{
+		fgets(buf, 12 + 1, fp);
+		fclose(fp);
+		fp = NULL;
+		strcat(record, buf);
+//		print2msg("ECU_ID", buf);
+		memset(buf, '\0', sizeof(buf));
+		//Comm_Cfg_Num
+		sprintf(buf, "%d", Comm_Cfg_Num);
+		strcat(record, buf);
+		memset(buf, '\0', sizeof(buf));
+		//Timestamp
+		strcat(record, timestamp);
+//		print2msg("Timestamp", timestamp);
+		//ECU_Msg_End
+		strcat(record, "END");
+	}
+	/*Comm_Cfg_Type==1*/
+	//查询
+	if (NULL == (fp = fopen("/etc/yuneng/datacenter.conf", "r")))
+	{
+		perror("datacenter.conf");
+		Comm_Cfg_Num--;
+	}
+	else
+	{
+		fgets(buf, 50, fp);
+		if (!strncmp(buf, "Domain=", 7))
+		{
+			sscanf(&buf[7], "%[^\n]", domain);
+			if (strlen(domain))
+			{
+				Socket_Type = 1;
+			}
+		}
+		memset(buf, '\0', sizeof(buf));
+		fgets(buf, 50, fp);
+		if (!strncmp(buf, "IP=", 3))
+		{
+			sscanf(&buf[3], "%[^\n]", ip);
+			if (strlen(ip))
+			{
+				Socket_Type = 0;
+			}
+		}
+		memset(buf, '\0', sizeof(buf));
+		fgets(buf, 50, fp);
+		if (!strncmp(buf, "Port1=", 6))
+		{
+			sscanf(&buf[6], "%[^\n]", port1);
+		}
+		memset(buf, '\0', sizeof(buf));
+		fgets(buf, 50, fp);
+		if (!strncmp(buf, "Port2=", 6))
+		{
+			sscanf(&buf[6], "%[^\n]", port2);
+		}
+		memset(buf, '\0', sizeof(buf));
+		fclose(fp);
+		fp = NULL;
+		if (NULL == (fp = fopen("/etc/yuneng/client.conf", "r")))
+		{
+			perror("client.conf");
+			Comm_Cfg_Num--;
+		}
+		else
+		{
+			fgets(buf, 50, fp);
+			if (!strncmp(buf, "Timeout=", 8))
+			{
+				sscanf(&buf[8], "%[^\n]", Timeout);
+			}
+			memset(buf, '\0', sizeof(buf));
+			fgets(buf, 50, fp);
+			if (!strncmp(buf, "Report_Interval=", 16))
+			{
+				sscanf(&buf[16], "%[^\n]", Report_Interval);
+			}
+			memset(buf, '\0', sizeof(buf));
+			fclose(fp);
+			fp = NULL;
+			//记录
+			//Comm_Cfg_Type
+			sprintf(buf, "%d", 1);
+			strcat(record, buf);
+//			print2msg("Comm_Cfg_Type", buf);
+			memset(buf, '\0', sizeof(buf));
+			//Port1
+			for (i = 5; i > strlen(port1); i--)
+			{
+				strcat(record, "A");
+			}
+			strcat(record, port1);
+//			print2msg("Port1", port1);
+			//Port2
+			for (i = 5; i > strlen(port2); i--)
+			{
+				strcat(record, "A");
+			}
+			strcat(record, port2);
+//			print2msg("Port2", port2);
+			//Timeout
+			for (i = 3; i > strlen(Timeout); i--)
+			{
+				strcat(record, "A");
+			}
+			strcat(record, Timeout);
+//			print2msg("Timeout", Timeout);
+			//Report_Interval
+			for (i = 2; i > strlen(Report_Interval); i--)
+			{
+				strcat(record, "A");
+			}
+			strcat(record, Report_Interval);
+//			print2msg("Report_Interval", Report_Interval);
+			//Socket_Type
+			sprintf(buf, "%d", Socket_Type);
+			strcat(record, buf);
+//			print2msg("Socket_Type", buf);
+			memset(buf, '\0', sizeof(buf));
+			//Socket_Addr
+			if (0 == Socket_Type)
+			{
+				strcat(record, ip);
+//				print2msg("Socket_Addr", ip);
+			}
+			if (1 == Socket_Type)
+			{
+				strcat(record, domain);
+//				print2msg("Socket_Addr", domain);
+			}
+			//Comm_Msg_End
+			strcat(record, "END");
+		}
+	}
+
+	/*Comm_Cfg_Type==2*/
+	memset(domain, '\0', sizeof(domain));
+	memset(ip, '\0', sizeof(ip));
+	memset(port1, '\0', sizeof(port1));
+	memset(port2, '\0', sizeof(port2));
+	memset(Timeout, '\0', sizeof(Timeout));
+	memset(Report_Interval, '\0', sizeof(Report_Interval));
+	//查询
+	if (NULL == (fp = fopen("/etc/yuneng/controlclient.conf", "r")))
+	{
+		perror("controlclient.conf");
+		Comm_Cfg_Num--;
+	}
+	else
+	{
+		fgets(buf, 50, fp);
+		if (!strncmp(buf, "Timeout=", 8))
+		{
+			sscanf(&buf[8], "%[^\n]", Timeout);
+		}
+		memset(buf, '\0', sizeof(buf));
+		fgets(buf, 50, fp);
+		if (!strncmp(buf, "Report_Interval=", 16))
+		{
+			sscanf(&buf[16], "%[^\n]", Report_Interval);
+		}
+		memset(buf, '\0', sizeof(buf));
+		fgets(buf, 50, fp);
+		if (!strncmp(buf, "Domain=", 7))
+		{
+			sscanf(&buf[7], "%[^\n]", domain);
+			if (strlen(domain))
+			{
+				Socket_Type = 1;
+			}
+		}
+		memset(buf, '\0', sizeof(buf));
+		fgets(buf, 50, fp);
+		if (!strncmp(buf, "IP=", 3))
+		{
+			sscanf(&buf[3], "%[^\n]", ip);
+			if (strlen(ip))
+			{
+				Socket_Type = 0;
+			}
+		}
+		memset(buf, '\0', sizeof(buf));
+		fgets(buf, 50, fp);
+		if (!strncmp(buf, "Port1=", 6))
+		{
+			sscanf(&buf[6], "%[^\n]", port1);
+		}
+		memset(buf, '\0', sizeof(buf));
+		fgets(buf, 50, fp);
+		if (!strncmp(buf, "Port2=", 6))
+		{
+			sscanf(&buf[6], "%[^\n]", port2);
+			if (10 == port2[strlen(port2) - 1])
+			{
+				port2[strlen(port2) - 1] = '\0';
+			}
+		}
+		memset(buf, '\0', sizeof(buf));
+		fclose(fp);
+		fp = NULL;
+
+		//记录
+		//Comm_Cfg_Type
+		sprintf(buf, "%d", 2);
+		strcat(record, buf);
+//		print2msg("Comm_Cfg_Type", buf);
+		memset(buf, '\0', sizeof(buf));
+		//Port1
+		for (i = 5; i > strlen(port1); i--)
+		{
+			strcat(record, "A");
+		}
+		strcat(record, port1);
+//		print2msg("Port1", port1);
+		//Port2
+		for (i = 5; i > strlen(port2); i--)
+		{
+			strcat(record, "A");
+		}
+		strcat(record, port2);
+//		print2msg("Port2", port2);
+		//Timeout
+		for (i = 3; i > strlen(Timeout); i--)
+		{
+			strcat(record, "A");
+		}
+		strcat(record, Timeout);
+//		print2msg("Timeout", Timeout);
+		//Report_Interval
+		for (i = 2; i > strlen(Report_Interval); i--)
+		{
+			strcat(record, "A");
+		}
+		strcat(record, Report_Interval);
+//		print2msg("Report_Interval", Report_Interval);
+		//Socket_Type
+		sprintf(buf, "%d", Socket_Type);
+		strcat(record, buf);
+//		print2msg("Socket_Type", buf);
+		memset(buf, '\0', sizeof(buf));
+		//Socket_Addr
+		if (0 == Socket_Type)
+		{
+			strcat(record, ip);
+//			print2msg("Socket_Addr", ip);
+		}
+		if (1 == Socket_Type)
+		{
+			strcat(record, domain);
+//			print2msg("Socket_Addr", domain);
+		}
+		//Comm_Msg_End
+		strcat(record, "END");
+	}
+
+	sprintf(buf, "%d", strlen(record));
+	for (i = 5; i > strlen(buf); i--)
+	{
+		strncpy(&record[10 - i], "A", 1);
+	}
+	strncpy(&record[10 - i], buf, i);
+	memset(buf, '\0', sizeof(buf));
+	sprintf(buf, "%d", Comm_Cfg_Num);
+//	print2msg("Comm_Cfg_Num", buf);
+	strncpy(&record[30], buf, 1);
+	memset(buf, '\0', sizeof(buf));
+	print2msg("Sent", record);
+	strcat(record, "\n");
+	for (i = 0; i < 3; i++)
+	{
+		if (-1 != send(fd_sock, record, strlen(record), 0))
+		{
+			printmsg("response_network_info: End");
+			return 0;
+		}
+	}
+	printmsg("response_version_mac: send faild");
+	return -1;
+}
+
+int set_network_info(int fd_sock, char*readbuff)		//A107
+{
+	FILE *fp;
+	char record[65535] = { '\0' };
+	char buf[100] = { '\0' };
+	char timestamp[15] = { '\0' };
+	int num = 0, ack_flag = 0, socket_type = -1, cfg_type = 0, length = 0, i, n;
+	char domain[50] = { '\0' };
+	char ip[50] = { '\0' };
+	char port1[6] = { '\0' };
+	char port2[6] = { '\0' };
+	char Timeout[4] = { '\0' };
+	char Report_Interval[3] = { '\0' };
+
+	printmsg("set_network_info: Start");
+	//Comm_Cfg_Num
+	strncpy(buf, &readbuff[30], 1);
+	num = atoi(buf);
+	memset(buf, '\0', sizeof(buf));
+	//Timestamp
+	strncpy(timestamp, &readbuff[31], 14);
+	/*配置第一条*/
+	if (1 == num || 2 == num)
+	{
+		//Comm_Cfg_Type
+		strncpy(buf, &readbuff[48], 1);
+		cfg_type = atoi(buf);
+//		print2msg("Comm_Cfg_Type", buf);
+		memset(buf, '\0', sizeof(buf));
+		//Port1
+		strncpy(port1, &readbuff[49], 5);
+		deletechar('A', port1);
+		deletechar('0', port1);
+//		print2msg("Port1", port1);
+		//Port2
+		strncpy(port2, &readbuff[54], 5);
+		deletechar('A', port2);
+		deletechar('0', port2);
+//		print2msg("Port2", port2);
+		//Timeout
+		strncpy(Timeout, &readbuff[59], 3);
+		deletechar('A', Timeout);
+		deletechar('0', Timeout);
+//		print2msg("Timeout", Timeout);
+		//Report_Interval 
+		strncpy(Report_Interval, &readbuff[62], 2);
+		deletechar('A', Report_Interval);
+		deletechar('0', Report_Interval);
+//		print2msg("Report_Interval", Report_Interval);
+		//Socket_Type
+		strncpy(buf, &readbuff[64], 1);
+//		print2msg("Socket_Type", buf);
+		socket_type = atoi(buf);
+		memset(buf, '\0', sizeof(buf));
+		//Socket_Addr
+		if (0 == socket_type)
+		{
+			sscanf(&readbuff[65], "%[^E]", ip);
+			length = strlen(ip);
+//			print2msg("IP", ip);
+		}
+		else if (1 == socket_type)
+		{
+			sscanf(&readbuff[65], "%[^E]", domain);
+			length = strlen(domain);
+//			print2msg("Domain", domain);
+		}
+		else
+		{
+			ack_flag = 1;
+		}
+		switch (cfg_type)
+		{
+			case 1: {
+				if (NULL == (fp = fopen("/etc/yuneng/datacenter.conf", "r")))
+				{
+					perror("datacenter.conf");
+					return -1;
+				}
+				else
+				{
+					while(1)
+					{
+						memset(buf, '\0', sizeof(buf));
+						fgets(buf, sizeof(buf), fp);
+						if(!strlen(buf))
+							break;
+						if(!strncmp(buf, "Domain", 6) && !strlen(domain))
+						{
+							sscanf(&buf[7], "%[^\n]", domain);
+						}
+						if(!strncmp(buf, "IP", 2) && !strlen(ip))
+						{
+							sscanf(&buf[3], "%[^\n]", ip);
+						}
+					}
+					fclose(fp);
+					fp = NULL;
+				}
+				if (NULL == (fp = fopen("/etc/yuneng/datacenter.conf", "w")))
+				{
+					perror("datacenter.conf");
+					ack_flag = 2;
+				}
+				else if (0 == ack_flag)
+				{
+					fputs("Domain=", fp);
+					fputs(domain, fp);
+					fputs("\n", fp);
+					fputs("IP=", fp);
+					fputs(ip, fp);
+					fputs("\n", fp);
+					fputs("Port1=", fp);
+					fputs(port1, fp);
+					fputs("\n", fp);
+					fputs("Port2=", fp);
+					fputs(port2, fp);
+					fputs("\n", fp);
+					fclose(fp);
+					fp = NULL;
+				}
+				if (NULL == (fp = fopen("/etc/yuneng/client.conf", "w")))
+				{
+					perror("client.conf");
+					ack_flag = 2;
+				}
+				else if (0 == ack_flag)
+				{
+					fputs("Timeout=", fp);
+					fputs(Timeout, fp);
+					fputs("\n", fp);
+					fputs("Report_Interval=", fp);
+					fputs(Report_Interval, fp);
+					fputs("\n", fp);
+					fclose(fp);
+					fp = NULL;
+				}
+				//重启client
+				sprintf(buf, "killall client");
+				if (!(i=system(buf)))
+				{
+					printmsg("Restart client");
+				}
+				else
+				{
+					printdecmsg("Restart client Failed",i);
+				}
+				memset(buf, '\0', sizeof(buf));
+				break;
+			}
+			case 2: {
+				if (NULL == (fp = fopen("/etc/yuneng/controlclient.conf", "r")))
+				{
+					perror("controlclient.conf");
+					return -1;
+				}
+				else
+				{
+					while(1)
+					{
+						memset(buf, '\0', sizeof(buf));
+						fgets(buf, sizeof(buf), fp);
+						if(!strlen(buf))
+							break;
+						if(!strncmp(buf, "Domain", 6) && !strlen(domain))
+						{
+							sscanf(&buf[7], "%[^\n]", domain);
+						}
+						if(!strncmp(buf, "IP", 2) && !strlen(ip))
+						{
+							sscanf(&buf[3], "%[^\n]", ip);
+						}
+					}
+					fclose(fp);
+					fp = NULL;
+				}
+				if (NULL == (fp = fopen("/etc/yuneng/controlclient.conf", "w")))
+				{
+					perror("controlclient.conf");
+					ack_flag = 2;
+				}
+				else if (0 == ack_flag)
+				{
+					fputs("Timeout=", fp);
+					fputs(Timeout, fp);
+					fputs("\n", fp);
+					fputs("Report_Interval=", fp);
+					fputs(Report_Interval, fp);
+					fputs("\n", fp);
+					fputs("Domain=", fp);
+					fputs(domain, fp);
+					fputs("\n", fp);
+					fputs("IP=", fp);
+					fputs(ip, fp);
+					fputs("\n", fp);
+					fputs("Port1=", fp);
+					fputs(port1, fp);
+					fputs("\n", fp);
+					fputs("Port2=", fp);
+					fputs(port2, fp);
+					fputs("\n", fp);
+					fclose(fp);
+					fp = NULL;
+				}
+				break;
+			}
+			default: {
+				ack_flag = 1;
+				break;
+			}
+		}
+	}
+	else if (0 != num)
+	{
+		ack_flag = 1;
+	}
+	/*配置第二条*/
+	memset(domain, '\0', sizeof(domain));
+	memset(ip, '\0', sizeof(ip));
+	memset(port1, '\0', sizeof(port1));
+	memset(port2, '\0', sizeof(port2));
+	memset(Timeout, '\0', sizeof(Timeout));
+	memset(Report_Interval, '\0', sizeof(Report_Interval));
+	if (2 == num)
+	{
+		//Comm_Cfg_Type
+		strncpy(buf, &readbuff[68 + length], 1);
+		cfg_type = atoi(buf);
+//		print2msg("Comm_Cfg_Type", buf);
+		memset(buf, '\0', sizeof(buf));
+		//Port1
+		strncpy(port1, &readbuff[69 + length], 5);
+		deletechar('A', port1);
+		deletechar('0', port1);
+//		print2msg("Port1", port1);
+		//Port2
+		strncpy(port2, &readbuff[74 + length], 5);
+		deletechar('A', port2);
+		deletechar('0', port2);
+//		print2msg("Port2", port2);
+		//Timeout
+		strncpy(Timeout, &readbuff[79 + length], 3);
+		deletechar('A', Timeout);
+		deletechar('0', Timeout);
+//		print2msg("Timeout", Timeout);
+		//Report_Interval
+		strncpy(Report_Interval, &readbuff[82 + length], 2);
+		deletechar('A', Report_Interval);
+		deletechar('0', Report_Interval);
+//		print2msg("Report_Interval", Report_Interval);
+		//Socket_Type
+		strncpy(buf, &readbuff[84 + length], 1);
+//		print2msg("Socket_Type", buf);
+		socket_type = atoi(buf);
+		memset(buf, '\0', sizeof(buf));
+		//Socket_Addr
+		if (0 == socket_type)
+		{
+			sscanf(&readbuff[85 + length], "%[^E]", ip);
+			length = strlen(ip);
+//			print2msg("IP", ip);
+		} else if (1 == socket_type)
+		{
+			sscanf(&readbuff[85 + length], "%[^E]", domain);
+			length = strlen(domain);
+//			print2msg("Domain", domain);
+		} else {
+			ack_flag = 1;
+		}
+		switch (cfg_type)
+		{
+			case 1: {
+				if (NULL == (fp = fopen("/etc/yuneng/datacenter.conf", "r")))
+				{
+					perror("datacenter.conf");
+					return -1;
+				}
+				else
+				{
+					while(1)
+					{
+						memset(buf, '\0', sizeof(buf));
+						fgets(buf, sizeof(buf), fp);
+						if(!strlen(buf))
+							break;
+						if(!strncmp(buf, "Domain", 6) && !strlen(domain))
+						{
+							sscanf(&buf[7], "%[^\n]", domain);
+						}
+						if(!strncmp(buf, "IP", 2) && !strlen(ip))
+						{
+							sscanf(&buf[3], "%[^\n]", ip);
+						}
+					}
+					fclose(fp);
+					fp = NULL;
+				}
+				if (NULL == (fp = fopen("/etc/yuneng/datacenter.conf", "w")))
+				{
+					perror("datacenter.conf");
+					ack_flag = 2;
+				}
+				else if (0 == ack_flag)
+				{
+					fputs("Domain=", fp);
+					fputs(domain, fp);
+					fputs("\n", fp);
+					fputs("IP=", fp);
+					fputs(ip, fp);
+					fputs("\n", fp);
+					fputs("Port1=", fp);
+					fputs(port1, fp);
+					fputs("\n", fp);
+					fputs("Port2=", fp);
+					fputs(port2, fp);
+					fputs("\n", fp);
+					fclose(fp);
+					fp = NULL;
+				}
+				if (NULL == (fp = fopen("/etc/yuneng/client.conf", "w")))
+				{
+					perror("client.conf");
+					ack_flag = 2;
+				}
+				else if (0 == ack_flag)
+				{
+					fputs("Timeout=", fp);
+					fputs(Timeout, fp);
+					fputs("\n", fp);
+					fputs("Report_Interval=", fp);
+					fputs(Report_Interval, fp);
+					fputs("\n", fp);
+					fclose(fp);
+					fp = NULL;
+				}
+				//重启client
+				sprintf(buf, "killall client");
+				if (!(i=system(buf)))
+				{
+					printmsg("Restart client");
+				}
+				else
+				{
+					printdecmsg("Restart client Failed",i);
+				}
+				memset(buf, '\0', sizeof(buf));
+				break;
+			}
+			case 2: {
+				if (NULL == (fp = fopen("/etc/yuneng/controlclient.conf", "r")))
+				{
+					perror("controlclient.conf");
+					return -1;
+				}
+				else
+				{
+					while(1)
+					{
+						memset(buf, '\0', sizeof(buf));
+						fgets(buf, sizeof(buf), fp);
+						if(!strlen(buf))
+							break;
+						if(!strncmp(buf, "Domain", 6) && !strlen(domain))
+						{
+							sscanf(&buf[7], "%[^\n]", domain);
+						}
+						if(!strncmp(buf, "IP", 2) && !strlen(ip))
+						{
+							sscanf(&buf[3], "%[^\n]", ip);
+						}
+					}
+					fclose(fp);
+					fp = NULL;
+				}
+				if (NULL == (fp = fopen("/etc/yuneng/controlclient.conf", "w")))
+				{
+					perror("controlclient.conf");
+					ack_flag = 2;
+				}
+				else if (0 == ack_flag)
+				{
+					fputs("Timeout=", fp);
+					fputs(Timeout, fp);
+					fputs("\n", fp);
+					fputs("Report_Interval=", fp);
+					fputs(Report_Interval, fp);
+					fputs("\n", fp);
+					fputs("Domain=", fp);
+					fputs(domain, fp);
+					fputs("\n", fp);
+					fputs("IP=", fp);
+					fputs(ip, fp);
+					fputs("\n", fp);
+					fputs("Port1=", fp);
+					fputs(port1, fp);
+					fputs("\n", fp);
+					fputs("Port2=", fp);
+					fputs(port2, fp);
+					fputs("\n", fp);
+					fclose(fp);
+					fp = NULL;
+				}
+				break;
+			}
+			default: {
+				ack_flag = 1;
+				break;
+			}
+		}
+	}
+	/*Head*/
+	strcpy(record, "APS13AAA52A100AAA0");
+	/*EMA_ECU_ACK*/
+	//ECU_ID
+	if (NULL == (fp = fopen("/etc/yuneng/ecuid.conf", "r")))
+	{
+		perror("ecuid.conf");
+		return -1;
+	}
+	fgets(buf, 12 + 1, fp);
+	fclose(fp);
+	fp = NULL;
+	strcat(record, buf);
+	memset(buf, '\0', sizeof(buf));
+	sprintf(buf, "A107%s%dEND", timestamp, ack_flag);
+	strcat(record, buf);
+	memset(buf, '\0', sizeof(buf));
+	print2msg("Sent", record);
+	strcat(record, "\n");
+	for (i = 0; i < 3; i++)
+	{
+		if (-1 != send(fd_sock, record, strlen(record), 0))
+		{
+			printmsg("set_network_info: End");
+			return 0;
+		}
+	}
+	printmsg("set_network_info: send faild");
+	return -1;
+}
+
+int send_ack(int fd_sock)
+{
+	FILE *fp;
+	char record[65535]={'\0'};
+	char buf[100] = { '\0' };
+	int i;
+
+//	printmsg("send_ack: Start");
+	/*Head*/
+	strcpy(record, "APS13AAA51A101AAA0");
+	/*ECU Message*/
+	//ECU_ID
+	if (NULL == (fp = fopen("/etc/yuneng/ecuid.conf", "r")))
+	{
+		perror("ecuid.conf");
+		return -1;
+	}
+	fgets(buf, 12 + 1, fp);
+	fclose(fp);
+	fp = NULL;
+	strcat(record, buf);
+//	print2msg("ECU_ID", buf);
+	memset(buf, '\0', sizeof(buf));
+	strcat(record,"A10100000000000000END");
+	print2msg("Sent", record);
+	strcat(record, "\n");
+	for (i = 0; i < 3; i++)
+	{
+			if (-1 != send(fd_sock, record, strlen(record), MSG_NOSIGNAL))
+			{
+//				printmsg("send_ack: End");
+				return 0;
+			}
+	}
+	printmsg("send_ack: send faild");
+	return -1;
+
+}
+int set_control_cmd(int fd_sock, char*readbuff)
+{
+	FILE *fp;
+	char cmd[256]={'\0'};
+	char record[65535]={'\0'};
+	char buf[256]={'\0'};
+	char timestamp[15] = { '\0' };
+	int ack_flag = 0, i;
+
+//	printmsg("set_control_cmd: Start");
+	//Timestamp
+	strncpy(timestamp, &readbuff[30], 14);
+	//cmd
+	strcpy(buf,&readbuff[47]);
+	strncpy(cmd, buf, strlen(buf)-3);
+	printmsg(cmd);
+	if(!(i=system(cmd)))
+	{
+		printmsg("Commond Succeed");
+	}
+	else
+	{
+		printdecmsg("Commond Faild",i);
+		ack_flag = 1;
+	}
+
+	/*Head*/
+	strcpy(record, "APS13AAA52A100AAA0");
+	/*EMA_ECU_ACK*/
+	//ECU_ID
+	if (NULL == (fp = fopen("/etc/yuneng/ecuid.conf", "r")))
+	{
+		perror("ecuid.conf");
+		return -1;
+	}
+	fgets(buf, 12 + 1, fp);
+	fclose(fp);
+	fp = NULL;
+	strcat(record, buf);
+	memset(buf, '\0', sizeof(buf));
+	sprintf(buf, "A108%s%dEND", timestamp, ack_flag);
+	strcat(record, buf);
+	memset(buf, '\0', sizeof(buf));
+	print2msg("Sent", record);
+	strcat(record, "\n");
+	for (i = 0; i < 3; i++)
+	{
+		if (-1 != send(fd_sock, record, strlen(record), 0))
+		{
+//			printmsg("set_control_cmd: End");
+			return 0;
+		}
+	}
+	printmsg("set_control_cmd: send faild");
+	return -1;
+}
+
+//获取ECU版本号
+int get_type(void)
+{
+	char version[50] = {'\0'};
+
+	FILE *fp;
+	fp = fopen("/etc/yuneng/version.conf", "r");
+	fgets(version, 50, fp);
+	fclose(fp);
+
+	if('\n' == version[strlen(version)-1])
+		version[strlen(version)-1] = '\0';
+
+	if(!strncmp(&version[strlen(version)-6], "NA-120", 6))
+		return 2;
+	else if(!strncmp(&version[strlen(version)-2], "MX", 2))
+		return 2;
+	else if(!strncmp(&version[strlen(version)-2], "NA", 2))
+		return 1;
+	else
+		return 0;
+}
+
+//设置逆变器的交流保护参数
+int set_ac_protection(int fd_sock, char*readbuff)
+{
+	FILE *fp;
+	sqlite3 *db;
+	char **azResult;
+	int nrow, ncolumn;
+	char *zErrMsg = 0;
+	char sql[128] = {'\0'};
+	char record[65535] = {'\0'};
+	char buf[128] = {'\0'};
+	char timestamp[15] = {'\0'};
+	int ack_flag = 0;
+	int Minpv, Maxpv, Minpf, Maxpf, GRTime, i, ret;
+
+	//Timestamp
+	strncpy(timestamp, &readbuff[30], 14);
+	//Minimum protection voltage
+	strncpy(buf, &readbuff[47], 3);
+	Minpv = atoi(buf);
+	//Maximum protection voltage
+	strncpy(buf, &readbuff[50], 3);
+	Maxpv = atoi(buf);
+	//Minimum protection frequency
+	strncpy(buf, &readbuff[53], 3);
+	Minpf = atoi(buf);
+	//Maximum protection frequency
+	strncpy(buf, &readbuff[56], 3);
+	Maxpf = atoi(buf);
+	//Grid Recovery Time
+	strncpy(buf, &readbuff[59], 5);
+	GRTime = atoi(buf);
+	//打开数据库//
+	if (sqlite3_open("/home/database.db", &db))
+	{
+		fprintf(stderr, "Can't open database: %s\n", sqlite3_errmsg(db));
+		sqlite3_close(db);
+		return -1;
+	}
+	memset(sql, '\0', sizeof(sql));
+	strcpy(sql, "SELECT * FROM preset ");
+	for (i = 0; i < 3; i++)
+	{
+		if (SQLITE_OK == sqlite3_get_table(db, sql, &azResult, &nrow, &ncolumn,	&zErrMsg))
+		{
+			if (!nrow)
+			{
+				memset(sql, '\0', sizeof(sql));
+				//获取版本号
+				ret = get_type();
+				if(2 == ret)
+				{
+					//MX
+					sprintf(sql, "INSERT INTO preset VALUES(1, 79, 181, %d, %d, %d, %d, %d)", Minpv, Maxpv, Minpf, Maxpf, GRTime);
+				}
+				else if (1 == ret)
+				{
+					//NA
+					sprintf(sql, "INSERT INTO preset VALUES(1, 150, 320, %d, %d, %d, %d, %d)", Minpv, Maxpv, Minpf, Maxpf, GRTime);
+				}
+				else
+				{
+					//SAA
+					sprintf(sql, "INSERT INTO preset VALUES(1, 119, 295, %d, %d, %d, %d, %d)", Minpv, Maxpv, Minpf, Maxpf, GRTime);
+				}
+				printmsg(sql);
+				sqlite3_exec(db, sql, 0, 0, &zErrMsg);
+			}
+			else
+			{
+				sprintf(sql, "UPDATE preset SET lv2=%d, uv2=%d, lf=%d, uf=%d, rt=%d WHERE id=1", Minpv, Maxpv, Minpf, Maxpf, GRTime);
+				printmsg(sql);
+				sqlite3_exec(db, sql, 0, 0, &zErrMsg);
+			}
+			sqlite3_free_table(azResult);
+			break;
+		}
+		sqlite3_free_table(azResult);
+	}
+	sqlite3_close(db);
+
+	if(NULL != (fp = fopen("/tmp/presetdata.conf", "w")))
+	{
+		fputs("1\n", fp);
+		fclose(fp);
+	}
+
+	/*Head*/
+	strcpy(record, "APS1300052A100AAA0");
+	/*EMA_ECU_ACK*/
+	//ECU_ID
+	strcat(record, ecuid);
+	memset(buf, '\0', sizeof(buf));
+	sprintf(buf, "A109%s%dEND", timestamp, ack_flag);
+	strcat(record, buf);
+	memset(buf, '\0', sizeof(buf));
+	print2msg("Sent", record);
+	strcat(record, "\n");
+	for (i = 0; i < 3; i++)
+	{
+		if (-1 != send(fd_sock, record, strlen(record), 0))
+		{
+			return 0;
+		}
+	}
+	return -1;
+}
+
+//设置逆变器的最大功率
+int set_maxpower(int fd_sock, char*readbuff)
+{
+	FILE *fp;
+	sqlite3 *db;
+	char **azResult;
+	int nrow, ncolumn;
+	char *zErrMsg = 0;
+	char sql[128] ={'\0'};
+
+	int maxpower;
+	char inverter_no[13] = {'\0'};
+
+	char record[65535] = {'\0'};
+	char buf[100] = {'\0'};
+
+	char timestamp[15] = {'\0'};
+	int ack_flag = 0;
+	int type, num, i;
+
+	strncpy(buf, &readbuff[30], 1);
+	type = atoi(buf);
+	strncpy(buf, &readbuff[31], 4);
+	num = atoi(buf);
+	printf("num = %d\n", num);
+	//Timestamp
+	strncpy(timestamp, &readbuff[35], 14);
+
+	if(sqlite3_open("/home/database.db", &db))
+	{
+		return -1;
+	}
+	fp = fopen("/tmp/setmaxpower.conf","w");
+	if(type)
+	{
+		for(i=0; i<num; i++)
+		{
+			memset(buf, '\0', sizeof(buf));
+			strncpy(buf, &readbuff[64 + i*18], 3);
+			maxpower = atoi(buf);
+			memset(buf, '\0', sizeof(buf));
+			strncpy(buf, &readbuff[52 + i*18], 12);
+			sprintf(sql, "UPDATE power SET limitedpower=%d WHERE id=%s", maxpower, buf);
+			printmsg(sql);
+			sqlite3_exec(db, sql, 0, 0, &zErrMsg);
+			fputs(buf, fp);
+			fputs("\n", fp);
+		}
+	}
+	else
+	{
+		memset(buf, '\0', sizeof(buf));
+		strncpy(buf, &readbuff[52], 3);
+		maxpower = atoi(buf);
+		sprintf(sql, "UPDATE power SET limitedpower=%d", maxpower);
+		sqlite3_exec(db, sql, 0, 0, &zErrMsg);
+		fputs("ALL\n", fp);
+	}
+
+	fclose(fp);
+	sqlite3_close(db);
+
+	/*Head*/
+	strcpy(record, "APS1300052A100AAA0");
+	/*EMA_ECU_ACK*/
+	//ECU_ID
+	strcat(record, ecuid);
+	memset(buf, '\0', sizeof(buf));
+	sprintf(buf, "A110%s%dEND", timestamp, ack_flag);
+	strcat(record, buf);
+	memset(buf, '\0', sizeof(buf));
+	print2msg("Sent", record);
+	strcat(record, "\n");
+	for (i = 0; i < 3; i++)
+	{
+		if (-1 != send(fd_sock, record, strlen(record), 0))
+		{
+			return 0;
+		}
+	}
+	return -1;
+}
+
+//设置逆变器的开关机
+int set_turn_on_off(int fd_sock, char *readbuff)
+{
+	FILE *fp;
+	char record[65535] = {'\0'};
+	char buf[128] = {'\0'};
+
+	char timestamp[15] = {'\0'};
+	int ack_flag = 0;
+
+	int type, num, i;
+
+	strncpy(buf, &readbuff[30], 1);
+	type = atoi(buf);
+	strncpy(buf, &readbuff[31], 4);
+	num = atoi(buf);
+	//Timestamp
+	strncpy(timestamp, &readbuff[35], 14);
+	if(NULL != (fp = fopen("/tmp/connect.conf", "w")))
+	{
+		if(1 == type)
+		{
+			fputs("disconnect all\n", fp);
+		}
+		if(0 == type)
+		{
+			fputs("connect all\n", fp);
+		}
+		if(2 == type)
+		{
+			for(i=0; i<num; i++)
+			{
+				memset(buf, '\0', sizeof(buf));
+				strncpy(buf, &readbuff[52 + i*16], 12);
+				fputs(buf, fp);
+				memset(buf, '\0', sizeof(buf));
+				strncpy(buf, &readbuff[64 + i*16], 1);
+				if(atoi(buf))
+				{
+					fputs("d\n", fp);
+				}
+				else
+				{
+					fputs("c\n", fp);
+				}
+			}
+		}
+		fclose(fp);
+	}
+
+	/*Head*/
+	strcpy(record, "APS1300052A100AAA0");
+	/*EMA_ECU_ACK*/
+	//ECU_ID
+	strcat(record, ecuid);
+	memset(buf, '\0', sizeof(buf));
+	sprintf(buf, "A111%s%dEND", timestamp, ack_flag);
+	strcat(record, buf);
+	memset(buf, '\0', sizeof(buf));
+	print2msg("Sent", record);
+	strcat(record, "\n");
+	for (i = 0; i < 3; i++)
+	{
+		if (-1 != send(fd_sock, record, strlen(record), 0))
+		{
+			return 0;
+		}
+	}
+	return -1;
+}
+
+//设置GFDI
+int set_gfdi(int fd_sock, char*readbuff)
+{
+	FILE *fp;
+	sqlite3 *db;
+	char **azResult;
+	int nrow, ncolumn;
+	char *zErrMsg = 0;
+	char sql[128] ={'\0'};
+
+	char record[65535] = {'\0'};
+	char buf[128] = {'\0'};
+
+	char timestamp[15] = {'\0'};
+	int ack_flag = 0;
+
+	char inverter_no[13] = {'\0'};
+	int type, num, i, length = 0;
+
+	strncpy(buf, &readbuff[30], 1);
+	type = atoi(buf);
+	strncpy(buf, &readbuff[31], 4);
+	num = atoi(buf);
+	//Timestamp
+	strncpy(timestamp, &readbuff[35], 14);
+
+	fp = fopen("/tmp/process_gfdi.conf", "w");
+	if(type)
+	{
+		for(i=0; i<num; i++)
+		{
+			memset(buf, '\0', sizeof(buf));
+			sscanf(&readbuff[52 + length], "%[^E]", buf);
+			length = length + strlen(buf) + 3;
+			strncpy(inverter_no, buf, 12);
+			fputs(inverter_no, fp);
+			fputs("\n", fp);
+		}
+	}
+	else
+	{
+		if(sqlite3_open("/home/database.db", &db))
+		{
+			return -1;
+		}
+		sprintf(sql, "SELECT id FROM id");
+		for (i = 0; i < 3; i++)
+		{
+			if (SQLITE_OK == sqlite3_get_table(db, sql, &azResult, &nrow, &ncolumn, &zErrMsg))
+			{
+				memset(sql, '\0', sizeof(sql));
+				for (i = 1; i <= nrow; i++)
+				{
+					fputs(azResult[i], fp);
+					fputs("\n", fp);
+				}
+				sqlite3_free_table(azResult);
+				break;
+			}
+			sqlite3_free_table(azResult);
+		}
+		sqlite3_close(db);
+	}
+	fclose(fp);
+	/*Head*/
+	strcpy(record, "APS1300052A100AAA0");
+	/*EMA_ECU_ACK*/
+	//ECU_ID
+	strcat(record, ecuid);
+	memset(buf, '\0', sizeof(buf));
+	sprintf(buf, "A112%s%dEND", timestamp, ack_flag);
+	strcat(record, buf);
+	memset(buf, '\0', sizeof(buf));
+	print2msg("Sent", record);
+	strcat(record, "\n");
+	for (i = 0; i < 3; i++)
+	{
+		if (-1 != send(fd_sock, record, strlen(record), 0))
+		{
+			return 0;
+		}
+	}
+	return -1;
+
+}
+
+int response_result(int fd_sock)
+{
+	FILE *fp;
+	sqlite3 *db;
+	char **azResult;
+	int nrow, ncolumn;
+	char *zErrMsg = 0;
+	char sql[128] = {'\0'};
+	char buf[128] = {'\0'};
+	int ecu_flag = 1, i, item;
+
+	if(NULL != (fp = fopen("/etc/yuneng/ecu_flag.conf", "r")))
+	{
+		fgets(buf, sizeof(buf), fp);
+		ecu_flag = atoi(buf);
+		fclose(fp);
+	}
+
+	if (sqlite3_open("/home/database.db", &db))
+	{
+		return -1;
+	}
+	sprintf(sql, "SELECT * FROM process_result WHERE flag=1 LIMIT 0,1");
+	for (i = 0; i < 3; i++)
+	{
+		if (SQLITE_OK == sqlite3_get_table(db, sql, &azResult, &nrow, &ncolumn, &zErrMsg))
+		{
+			if(nrow)
+			{
+				if(!ecu_flag)
+				{
+					sqlite3_free_table(azResult);
+					memset(sql, '\0', sizeof(sql));
+					sprintf(sql, "UPDATE process_result SET flag=0 WHERE flag=1");
+					sqlite3_exec(db, sql, 0, 0, &zErrMsg);
+					sqlite3_close(db);
+					return 0;
+				}
+				item = atoi(azResult[3]);
+				printmsg(azResult[3]);
+				printmsg(azResult[4]);
+				for (i = 0; i < 3; i++)
+				{
+					if (-1 != send(fd_sock, azResult[4], strlen(azResult[4]), 0))
+					{
+						sqlite3_free_table(azResult);
+						memset(sql, '\0', sizeof(sql));
+						sprintf(sql, "UPDATE process_result SET flag=0 WHERE item=%d", item);
+						sqlite3_exec(db, sql, 0, 0, &zErrMsg);
+						sqlite3_close(db);
+						return 1;
+					}
+				}
+				return 0;
+			}
+			else
+			{
+				sqlite3_free_table(azResult);
+				sqlite3_close(db);
+				return 0;
+			}
+		}
+		sqlite3_free_table(azResult);
+	}
+	sqlite3_close(db);
+	return 0;
+}
+
+//上传ECU级别的交流保护参数和范围
+int response_ecu_ac_protection(int fd_sock, char *timestamp)
+{
+	FILE *fp;
+	sqlite3 *db;
+	char **azResult;
+	int nrow, ncolumn;
+	char *zErrMsg = 0;
+	char sql[128] = {'\0'};
+
+	char record[65535] = {'\0'};
+	char buf[128] = {'\0'};
+	int ecu_type, i;
+
+	/*Head*/
+	strcpy(record, "APS1300000A113AAA0");
+	/*ECU Message*/
+	strcat(record, ecuid);
+	strcat(record, timestamp);
+	strcat(record, "END");
+	sqlite3_open("/home/database.db", &db);
+	strcpy(sql, "SELECT * FROM preset");
+	for(i=0; i<3; i++)
+	{
+		if (SQLITE_OK == sqlite3_get_table(db, sql, &azResult, &nrow, &ncolumn,	&zErrMsg))
+		{
+			if(nrow)
+				sprintf(buf, "%03d%03d%03d%03d%05d", atoi(azResult[11]), atoi(azResult[12]), atoi(azResult[13]), atoi(azResult[14]), atoi(azResult[15]));
+			else
+				sprintf(buf, "00000000000000000");
+			strcat(record, buf);
+			sqlite3_free_table(azResult);
+			break;
+		}
+		sqlite3_free_table(azResult);
+	}
+
+	ecu_type = get_type();
+	if(2 == ecu_type)
+	{
+		//MX
+		strcat(record, "082118124155551600600649020250");
+	}
+	else if(1 == ecu_type)
+	{
+		//NA
+		strcat(record, "181239221298551600600649020250");
+	}
+	else
+	{
+		//SAA
+		strcat(record, "149217221278451500500549020250");
+	}
+	//ECU级别的最大功率
+	memset(sql, 0, sizeof(sql));
+	strcpy(sql,"SELECT * FROM powerall");
+	for(i=0; i<3; i++)
+	{
+		if (SQLITE_OK == sqlite3_get_table(db, sql, &azResult, &nrow, &ncolumn,	&zErrMsg))
+		{
+			if(nrow)
+				sprintf(buf, "%03d", atoi(azResult[5]));
+			else
+				sprintf(buf, "000");
+			strcat(record, buf);
+			sqlite3_free_table(azResult);
+			break;
+		}
+		sqlite3_free_table(azResult);
+	}
+	sqlite3_close(db);
+	strcat(record, "END");
+	memset(buf, '\0', sizeof(buf));
+	sprintf(buf, "%05d", strlen(record));
+	strncpy(&record[5], buf, 5);
+	memset(buf, '\0', sizeof(buf));
+	print2msg("Sent", record);
+	strcat(record, "\n");
+	for (i = 0; i < 3; i++)
+	{
+		if (-1 != send(fd_sock, record, strlen(record), 0))
+		{
+			return 0;
+		}
+	}
+	return -1;
+}
+
+//上传逆变器级别的交流保护参数和范围
+int response_inverter_ac_protection(int fd_sock, char *timestamp)
+{
+	FILE *fp;
+	sqlite3 *db;
+	char **azResult;
+	int nrow, ncolumn;
+	char *zErrMsg = 0;
+	char sql[128] = {'\0'};
+	char record[65535] = {'\0'};
+	char buf[128] = {'\0'};
+	int ecu_type, i, num = 0;
+	char prevl[10]={'\0'};
+	char prevu[10]={'\0'};
+	char prefl[10]={'\0'};
+	char prefu[10]={'\0'};
+	char prert[10]={'\0'};
+	char preset[18]={'\0'};
+
+	/*Head*/
+	strcpy(record, "APS1300000A114AAA0");
+	/*ECU Message*/
+	strcat(record, ecuid);
+	strcat(record, "0000");//number
+	strcat(record, timestamp);
+	strcat(record, "END");
+
+	sqlite3_open("/home/database.db", &db);
+	strcpy(sql,"SELECT id FROM id ");
+	if(NULL != (fp = fopen("/etc/yuneng/presetdata.txt", "r")))
+	{
+		for(i=0; i<3; i++)
+		{
+			if (SQLITE_OK == sqlite3_get_table(db, sql, &azResult, &nrow, &ncolumn,	&zErrMsg))
+			{
+				for(i=0; i<nrow; i++)
+				{
+					fgets(buf, sizeof(buf), fp);
+					if(!strlen(buf))
+						break;
+					if(buf[strlen(buf)-1])
+						buf[strlen(buf)-1]='\0';
+					sscanf(buf, "%[^,],%[^,],%[^,],%[^,],%s", &prevl, &prevu, &prefl, &prefu, &prert);
+					if(!strcmp(prevl, "-") || !strlen(prevl))
+						continue;
+					else
+						snprintf(preset, sizeof(preset), "%03d%03d%03d%03d%05d", atoi(prevl), atoi(prevu), atoi(prefl), atoi(prefu), atoi(prert));
+
+					strcat(record, azResult[i+1]);
+					strcat(record, preset);
+					ecu_type = get_type();
+					if(2 == ecu_type)
+					{
+						//MX
+						strcat(record, "082118124155551600600649END");
+					}
+					else if(1 == ecu_type)
+					{
+						//NA
+						strcat(record, "181239221298551600600649END");
+					}
+					else
+					{
+						//SAA
+						strcat(record, "149217221278451500500549END");
+					}
+					num++;
+				}
+				sqlite3_free_table(azResult);
+				break;
+			}
+			sqlite3_free_table(azResult);
+		}
+		fclose(fp);
+	}
+	sqlite3_close(db);
+	memset(buf, '\0', sizeof(buf));
+	sprintf(buf, "%04d", num);
+	strncpy(&record[30], buf, 4);
+	memset(buf, '\0', sizeof(buf));
+	sprintf(buf, "%05d", strlen(record));
+	strncpy(&record[5], buf, 5);
+	print2msg("Sent", record);
+	strcat(record, "\n");
+	for (i = 0; i < 3; i++)
+	{
+		if (-1 != send(fd_sock, record, strlen(record), 0))
+		{
+			return 0;
+		}
+	}
+	return -1;
+}
+
+//上传ECU每个逆变器的GFDI状态
+int response_gfdi_status(int fd_sock, char *timestamp)
+{
+	FILE *fp;
+	sqlite3 *db;
+	char **azResult;
+	int nrow, ncolumn;
+	char *zErrMsg = 0;
+	char sql[128] = {'\0'};
+	char buf[128] = {'\0'};
+	char record[65535] = {'\0'};
+	int i, num = 0;
+
+	/*Head*/
+	strcpy(record, "APS1300000A115AAA0");
+	/*ECU Message*/
+	strcat(record, ecuid);
+	/*Number*/
+	strcat(record, "0000");
+	strcat(record, timestamp);
+	strcat(record, "END");
+
+	if(NULL != (fp = fopen("/etc/yuneng/last_gfdi_status.txt", "r")))
+	{
+		while(1)
+		{
+			memset(buf, '\0', sizeof(buf));
+			fgets(buf, sizeof(buf), fp);
+			if(!strlen(buf))
+				break;
+			if (10 == buf[strlen(buf) - 1])
+			{
+				buf[strlen(buf) - 1] = '\0';
+			}
+			strcat(record, buf);
+			num++;
+		}
+		fclose(fp);
+	}
+	memset(buf, '\0', sizeof(buf));
+	sprintf(buf, "%04d", num);
+	strncpy(&record[30], buf, 4);
+	memset(buf, '\0', sizeof(buf));
+	sprintf(buf, "%05d", strlen(record));
+	strncpy(&record[5], buf, 5);
+	print2msg("Sent", record);
+	strcat(record, "\n");
+	for (i = 0; i < 3; i++)
+	{
+		if (-1 != send(fd_sock, record, strlen(record), 0))
+		{
+			return 0;
+		}
+	}
+	return -1;
+}
+
+//上传ECU每个逆变器的开关机状态
+int response_on_off_status(int fd_sock, char *timestamp)
+{
+	FILE *fp;
+	sqlite3 *db;
+	char **azResult;
+	int nrow, ncolumn;
+	char *zErrMsg = 0;
+	char sql[128] = {'\0'};
+	char buf[128] = {'\0'};
+	char record[65535] = {'\0'};
+	int i, num = 0;
+
+	/*Head*/
+	strcpy(record, "APS1300000A116AAA0");
+	/*ECU Message*/
+	strcat(record, ecuid);
+	/*Number*/
+	strcat(record, "0000");
+	strcat(record, timestamp);
+	strcat(record, "END");
+
+	if(NULL != (fp = fopen("/etc/yuneng/last_turn_on_off_status.txt", "r")))
+	{
+		while(1)
+		{
+			memset(buf, '\0', sizeof(buf));
+			fgets(buf, sizeof(buf), fp);
+			if(!strlen(buf))
+				break;
+			if (10 == buf[strlen(buf) - 1])
+			{
+				buf[strlen(buf) - 1] = '\0';
+			}
+			strcat(record, buf);
+			num++;
+		}
+		fclose(fp);
+	}
+	memset(buf, '\0', sizeof(buf));
+	sprintf(buf, "%04d", num);
+	strncpy(&record[30], buf, 4);
+	memset(buf, '\0', sizeof(buf));
+	sprintf(buf, "%05d", strlen(record));
+	strncpy(&record[5], buf, 5);
+	print2msg("Sent", record);
+	strcat(record, "\n");
+	for (i = 0; i < 3; i++)
+	{
+		if (-1 != send(fd_sock, record, strlen(record), 0))
+		{
+			return 0;
+		}
+	}
+	return -1;
+}
+
+//上传最大功率及范围
+int response_max_power(int fd_sock, char *timestamp)
+{
+	FILE *fp;
+	sqlite3 *db;
+	char **azResult;
+	int nrow, ncolumn;
+	char *zErrMsg = 0;
+	char sql[128] = {'\0'};
+
+	char buf[128] = {'\0'};
+	char record[65535] = {'\0'};
+	int i;
+
+	/*Head*/
+	strcpy(record, "APS1300000A117AAA0");
+	/*ECU Message*/
+	strcat(record, ecuid);
+	sqlite3_open("/home/database.db", &db);
+	strcpy(sql, "SELECT * FROM power");
+	for(i=0; i<3; i++)
+	{
+		if (SQLITE_OK == sqlite3_get_table(db, sql, &azResult, &nrow, &ncolumn,	&zErrMsg))
+		{
+			sprintf(buf, "%04d", nrow);
+			strcat(record, buf);
+			strcat(record, timestamp);
+			strcat(record, "END");
+
+			for(i=0; i<nrow; i++)
+			{
+				strcat(record, azResult[8 + i*7]);
+				memset(buf, 0, sizeof(buf));
+				if(!strcmp("-", azResult[10 + i*7]))
+					strcat(record, "000");
+				else
+				{
+					sprintf(buf, "%03d", atoi(azResult[10 + i*7]));
+					strcat(record, buf);
+				}
+				strcat(record, "020250");
+				strcat(record, "END");
+			}
+			sqlite3_free_table(azResult);
+			break;
+		}
+		sqlite3_free_table(azResult);
+	}
+	sqlite3_close(db);
+	memset(buf, '\0', sizeof(buf));
+	sprintf(buf, "%05d", strlen(record));
+	strncpy(&record[5], buf, 5);
+	memset(buf, '\0', sizeof(buf));
+	print2msg("Sent", record);
+	strcat(record, "\n");
+	for (i = 0; i < 3; i++)
+	{
+		if (-1 != send(fd_sock, record, strlen(record), 0))
+		{
+			return 0;
+		}
+	}
+	return -1;
+}
+
+int check_msg(char *recvbuf)
+{
+	int cmd_id = 0, length;
+	char buff[128] = {'\0'};
+
+	//校验开头APS与结尾END
+	if (strncmp(recvbuf, "APS", 3) || strncmp(&recvbuf[strlen(recvbuf)-3], "END", 3))
+		return -1;
+	//校验长度
+	strncpy(buff, &recvbuf[5], 5);
+	deletechar('A', buff);
+	length = atoi(buff);
+	if(length != strlen(recvbuf))
+		return -1;
+	//校验ECUID
+	memset(buff, '\0', sizeof(buff));
+	strncpy(buff, &recvbuf[18], 12);
+	if (strcmp(buff, ecuid))
+		return -1;
+	//解析COMMOND_ID
+
+
+	return cmd_id;
+}
+
+int set_ecu_flag(int fd_sock, char *readbuff)
+{
+	FILE *fp;
+	char record[65535] = { '\0' };
+	char buf[100] = { '\0' };
+	char timestamp[15] = { '\0' };
+	char timezone[50] = { '\0' };
+	char ecu_flag[2] = {'\0'};
+	int ack_flag = 0, i;
+
+	//Timestamp
+	strncpy(timestamp, &readbuff[30], 14);
+	//ECU_FLAG
+	strncpy(ecu_flag, &readbuff[44], 1);
+	/*配置处理*/
+	fp = fopen("/etc/yuneng/ecu_flag.conf", "w");
+	fputs(ecu_flag, fp);
+	fputs("\n", fp);
+	fclose(fp);
+	fp = NULL;
+	/*Head*/
+	strcpy(record, "APS13AAA52A100AAA0");
+	/*EMA_ECU_ACK*/
+	//ECU_ID
+	strcat(record, ecuid);
+	memset(buf, '\0', sizeof(buf));
+	sprintf(buf, "A119%s%dEND", timestamp, ack_flag);
+	strcat(record, buf);
+	memset(buf, '\0', sizeof(buf));
+	print2msg("Sent", record);
+	strcat(record, "\n");
+	for (i = 0; i < 3; i++)
+	{
+		if (-1 != send(fd_sock, record, strlen(record), 0))
+		{
+			printmsg("set_time_zone: End");
+			return 0;
+		}
+	}
+	printmsg("set_time_zone: send faild");
+	return -1;
+}
+
+int response_first_time_info(int fd_sock, char *timestamp)
+{
+	FILE *fp;
+
+	fp = fopen("/tmp/presetdata.conf", "w");
+	{
+		fputs("2", fp);
+		fclose(fp);
+	}
+	fp = fopen("/tmp/getmaxpower.conf", "w");
+	{
+		fputs("ALL", fp);
+		fclose(fp);
+	}
+	response_inverter_info(fd_sock, timestamp);			//A102
+	close(fd_sock);
+	fd_sock = create_socket();
+	connect_socket(fd_sock);
+	response_ecu_ac_protection(fd_sock, timestamp);		//A113
+	close(fd_sock);
+	fd_sock = create_socket();
+	connect_socket(fd_sock);
+	response_gfdi_status(fd_sock, timestamp);			//A115
+	close(fd_sock);
+	fd_sock = create_socket();
+	connect_socket(fd_sock);
+	response_on_off_status(fd_sock, timestamp);			//A116
+	return fd_sock;
+}
+
+int main(int argc, char *argv[])
+{
+	int sockfd, sendbytes, recvbytes, msglength, i, ret = 0;
+	char sendbuf[65535] = { '\0' };
+	char buf[1024] = { '\0' };
+	char recvbuf[65535] = { '\0' };
+	char curtime[19] = { '\0' };
+	char Timestamp[15] = { '\0' };
+	FILE *fp;
+	fd_set rd;
+	struct timeval timeout;
+
+	/*
+	 * INITIALITIZATION
+	 */
+	//ECU_ID
+	if (NULL == (fp = fopen("/etc/yuneng/ecuid.conf", "r")))
+	{
+		perror("ecuid.conf");
+		return -1;
+	}
+	fgets(ecuid, 13, fp);
+	fclose(fp);
+	fp = NULL;
+
+	while (1)
+	{
+		recvbytes = 0;
+		sockfd = create_socket();
+		while(connect_socket(sockfd))
+		{
+			sprintf(buf,"Reconnect after %d minutes",Minutes);
+			printmsg(buf);
+			memset(buf, '\0', sizeof(buf));
+			sleep(Minutes * 60);
+		}
+		sleep(1);
+		//上传EMA设置后变动的数据
+		if (response_result(sockfd))
+		{
+			close(sockfd);
+			sleep(5);
+			continue;
+		}
+		sleep(3);
+		//发送请求命令
+		send_ack(sockfd);
+		FD_ZERO(&rd);
+		FD_SET(sockfd, &rd);
+		timeout.tv_sec = TimeOut;
+		timeout.tv_usec = 0;
+		msglength = 0;
+		//接收命令
+		if (0 >= select(sockfd + 1, &rd, NULL, NULL, &timeout))
+		{
+			sprintf(buf,"Receive date from EMA timeout (%d s)\nReconnect after %d minutes", TimeOut, Minutes);
+			printmsg(buf);
+			memset(buf, '\0', sizeof(buf));
+			close(sockfd);
+			sleep(Minutes * 60);
+			continue;
+		}
+		else
+		{
+			sleep(1);
+			memset(recvbuf, '\0', sizeof(recvbuf));
+			recvbytes = recv(sockfd, recvbuf, sizeof(recvbuf), 0);
+			print2msg("recvbuff", recvbuf);
+			while(recvbytes < 10)
+			{
+				timeout.tv_sec = 1;
+				timeout.tv_usec = 0;
+				if (0 >= select(sockfd + 1, &rd, NULL, NULL, &timeout))
+				{
+					break;
+				}
+				usleep(10000);
+				memset(buf, '\0', sizeof(buf));
+				recvbytes += recv(sockfd, buf, sizeof(buf), 0);
+				print2msg("recvbuff", buf);
+				strcat(recvbuf,buf);
+			}
+			if(recvbytes >= 10 && !strncmp(recvbuf, "APS", 3))
+			{
+				memset(buf, '\0', sizeof(buf));
+				strncpy(buf, &recvbuf[5], 5);
+				deletechar('A', buf);
+				msglength = atoi(buf);
+			}
+			while(recvbytes < msglength)
+			{
+				timeout.tv_sec = 1;
+				timeout.tv_usec = 0;
+				if (0 >= select(sockfd + 1, &rd, NULL, NULL, &timeout))
+				{
+					break;
+				}
+				usleep(10000);
+				memset(buf, '\0', sizeof(buf));
+				recvbytes += recv(sockfd, buf, sizeof(buf), 0);
+				print2msg("recvbuff", buf);
+				strcat(recvbuf,buf);
+			}
+			print2msg("Recv", recvbuf);
+			//解析命令
+			if (-1 == (ret = check_msg(recvbuf))){
+				close(sockfd);
+				printmsg("format error\n");
+				sleep(300);
+				continue;
+			}
+
+			if (!strncmp(recvbuf, "APS", 3) && !strncmp(&recvbuf[10], "A100", 4))
+			{
+				if(!strncmp(&recvbuf[30], "A101", 4))
+				{
+					printmsg("No Commond");
+					sprintf(buf,"Reconnect after %d minutes",Minutes);
+					printmsg(buf);
+					memset(buf, '\0', sizeof(buf));
+					close(sockfd);
+					sleep(Minutes * 60);
+					continue;
+				}
+				else
+				{
+					printmsg("EMA receive successfully");
+				}
+			}
+			else if (!strncmp(recvbuf, "APS", 3)&& !strncmp(&recvbuf[10], "A101", 4))
+			{
+				strncpy(Timestamp, &recvbuf[34], 14);
+				if (!strncmp(&recvbuf[30], "A102", 4))
+				{
+					response_inverter_info(sockfd, Timestamp);
+				}
+				else if (!strncmp(&recvbuf[30], "A104", 4))
+				{
+					response_time_zone(sockfd, Timestamp);
+				}
+				else if (!strncmp(&recvbuf[30], "A106", 4))
+				{
+					response_network_info(sockfd, Timestamp);
+				}
+				else if (!strncmp(&recvbuf[30], "A113", 4))
+				{
+					response_ecu_ac_protection(sockfd, Timestamp);
+				}
+				else if (!strncmp(&recvbuf[30], "A114", 4))
+				{
+					response_inverter_ac_protection(sockfd, Timestamp);
+				}
+				else if (!strncmp(&recvbuf[30], "A115", 4))
+				{
+					response_gfdi_status(sockfd, Timestamp);
+				}
+				else if (!strncmp(&recvbuf[30], "A116", 4))
+				{
+					response_on_off_status(sockfd, Timestamp);
+				}
+				else if (!strncmp(&recvbuf[30], "A117", 4))
+				{
+					response_max_power(sockfd, Timestamp);
+				}
+				else if (!strncmp(&recvbuf[30], "A118", 4))
+				{
+					sockfd = response_first_time_info(sockfd, Timestamp);
+				}
+				else
+				{
+					printmsg("No Such Commond:A101");
+					close(sockfd);
+					sleep(Minutes * 60);
+					continue;
+				}
+			}
+			else if (!strncmp(recvbuf, "APS", 3) && !strncmp(&recvbuf[10], "A103", 4))
+			{
+				set_inverter_id(sockfd, recvbuf);
+			}
+			else if (!strncmp(recvbuf, "APS", 3) && !strncmp(&recvbuf[10], "A105", 4))
+			{
+				set_time_zone(sockfd, recvbuf);
+			}
+			else if (!strncmp(recvbuf, "APS", 3) && !strncmp(&recvbuf[10], "A107", 4))
+			{
+				set_network_info(sockfd, recvbuf);
+			}
+			else if (!strncmp(recvbuf, "APS", 3) && !strncmp(&recvbuf[10], "A108", 4))
+			{
+				set_control_cmd(sockfd, recvbuf);
+			}
+			else if (!strncmp(recvbuf, "APS", 3) && !strncmp(&recvbuf[10], "A109", 4))
+			{
+				set_ac_protection(sockfd, recvbuf);
+			}
+			else if (!strncmp(recvbuf, "APS", 3) && !strncmp(&recvbuf[10], "A110", 4))
+			{
+				set_maxpower(sockfd, recvbuf);
+			}
+			else if (!strncmp(recvbuf, "APS", 3) && !strncmp(&recvbuf[10], "A111", 4))
+			{
+				set_turn_on_off(sockfd, recvbuf);
+			}
+			else if (!strncmp(recvbuf, "APS", 3) && !strncmp(&recvbuf[10], "A112", 4))
+			{
+				set_gfdi(sockfd, recvbuf);
+			}
+			else if (!strncmp(recvbuf, "APS", 3) && !strncmp(&recvbuf[10], "A119", 4))
+			{
+				set_ecu_flag(sockfd, recvbuf);
+			}
+			else
+			{
+				printmsg("No Such Commond");
+				close(sockfd);
+				sleep(Minutes * 60);
+				continue;
+			}
+			close(sockfd);
+			sleep(5);
+		}
+	}
+	return 0;
+}
+

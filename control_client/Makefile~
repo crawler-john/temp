@@ -1,0 +1,21 @@
+#CC = arm-linux-gcc
+CC = /usr/local/arm-2007q1/bin/arm-none-linux-gnueabi-gcc
+obj = control_client control_client_test  readdb
+CFLAGS = -lsqlite3 -ldl -lpthread -I include/ -L lib
+
+make: 
+	make control_client
+	make control_client_test
+	make readdb
+
+control_client :control_client.c 
+	$(CC) -o control_client control_client.c $(CFLAGS)
+
+control_client_test :control_client_test.c 
+	$(CC) -o control_client_test control_client_test.c $(CFLAGS)
+
+readdb :readdb.c 
+	$(CC) -o readdb readdb.c $(CFLAGS)
+
+clean:
+	rm $(obj)

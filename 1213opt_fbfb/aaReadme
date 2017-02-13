@@ -1,0 +1,6 @@
+获取短地址返回由 FFFF 改为FF1F FFF1等，在组网时(bind_inverters)和补要短地址(bind_nodata_inverter)
+加入两个字节 源地址 目标地址
+到目前为止为最新优化器程序--20160802
+
+加入能量，record数据 多上传ecu.output_energy_optimizer(本轮系统电量) 和 inveter->cur_output_energy(本轮优化器电量)
+--20160818
