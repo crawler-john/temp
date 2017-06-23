@@ -1,0 +1,10 @@
+CC = arm-linux-gcc -o main.exe
+SRC = 3501.c resolve.c access.c calculate.c database.c datetime.c display.c file.c gprs.c main.c plc.c protocal.c socket.c serial.c setpower.c
+OBJ = main.exe
+CFLAG = -I include/ -L lib/ -lsqlite3
+
+$(OBJ) : $(SRC)
+	$(CC) -o $(OBJ) $(SRC) $(CFLAG)
+
+clean:
+	rm $(OBJ)
