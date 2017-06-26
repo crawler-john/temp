@@ -877,6 +877,7 @@ int process_encryption_alarm(struct inverter_info_t *firstinverter)
 				get_date_time(date_time);
 				select_info(curinverter->inverterid,&encryption_status);
 				sprintf(buff_ema, "%s%05d%s%s%012s0%00d%s%sEND%012s1%1dEND", "APS13",(66+17),"A140","AAA0",ecuid, 1, "00000000000000",date_time, curinverter->inverterid,encryption_status);
+				save_process_result(140, buff_ema);
 			}
 
 			//只要通信上了就更新数据库时间
