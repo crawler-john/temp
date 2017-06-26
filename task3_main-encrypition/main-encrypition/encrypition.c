@@ -12,6 +12,40 @@ extern char ecuid[13];			//ECU的ID
 
 char key_global[16]={'\0'};
 
+
+
+int initEncryption(struct inverter_info_t *firstinverter)
+{
+	struct inverter_info_t *curinverter = firstinverter;
+	int i =0;
+	char sql[1024]={'\0'};
+	char *zErrMsg=0;
+	int nrow=0,ncolumn=0;
+	char **azResult;
+	sqlite3 *db=NULL;
+
+
+	if(SQLITE_OK != sqlite3_open("/home/encryption.db", &db))
+		return -1;
+
+	for(i=0; (i<MAXINVERTERCOUNT)&&(12==strlen(curinverter->inverterid)); i++){		//每个逆变器要一次数据
+
+		//查询时间，并更新最后一次连接逆变器的时间
+		memset(sql, '\0', sizeof(sql));
+		sprintf(sql, "SELECT time FROM alarm where id = '%s'",curinverter->inverterid);
+		if(SQLITE_OK == sqlite3_get_table( db , sql , &azResult , &nrow , &ncolumn , &zErrMsg ))
+		{
+			curinverter->connect_time = atoi(azResult[1]);
+		}
+
+		curinverter++;
+	}
+	sqlite3_close( db );
+	return 0;
+}
+
+
+
 int save_encrypition_result(char *id, char *key, int status, int result)					//更新逆变器的密钥信息
 {
 	char sql[1024]={'\0'};
@@ -84,7 +118,7 @@ int clear_read_flag()		//清除数据库中的读取标志
 	return 0;
 }
 
-int set_encrypition_key(char *id, char *key, char *buff_inv)	//给逆变器添加密钥
+int set_encrypition_key(char *id, char *key, char *buff_inv,char A139_flag)	//给逆变器添加密钥
 {
 	unsigned char sendbuff[512]={'\0'};
 	char inverter_result[256]={'\0'};
@@ -174,6 +208,7 @@ int set_encrypition_key(char *id, char *key, char *buff_inv)	//给逆变器添�
 			{
 				save_encrypition_result(id, key, 1, 1);
 				sprintf(buff_inv, "%012s11END", id);
+				return 0;
 			}
 			else
 			{
@@ -181,10 +216,10 @@ int set_encrypition_key(char *id, char *key, char *buff_inv)	//给逆变器添�
 				sprintf(buff_inv, "%012s22END", id);
 
 				sprintf(inverter_result, "%012s0END", id);
-				save_inverter_parameters_result_id(id, 139, inverter_result);
+				if(1 == A139_flag)
+					save_inverter_parameters_result_id(id, 139, inverter_result);
+				return 1;
 			}
-
-			return 1;
 		}
 		else
 		{
@@ -195,9 +230,10 @@ int set_encrypition_key(char *id, char *key, char *buff_inv)	//给逆变器添�
 	sprintf(buff_inv, "%012s32END", id);
 
 	sprintf(inverter_result, "%012s0END", id);
-	save_inverter_parameters_result_id(id, 139, inverter_result);
+	if(1 == A139_flag)
+		save_inverter_parameters_result_id(id, 139, inverter_result);
 
-	return 0;
+	return 1;
 }
 
 int set_encrypition_all(struct inverter_info_t *firstinverter, char *key, int operator)		//设置所有逆变器的加密信息
@@ -211,7 +247,7 @@ int set_encrypition_all(struct inverter_info_t *firstinverter, char *key, int op
 
 	for(i=0; (i<MAXINVERTERCOUNT)&&(12==strlen(inverter->inverterid)); i++, inverter++){
 		memset(buff_inv, '\0', sizeof(buff_inv));
-		set_encrypition_key(inverter->inverterid, key, buff_inv);
+		set_encrypition_key(inverter->inverterid, key, buff_inv,1);
 		count++;
 		strcat(buff_all, buff_inv);
 	}
@@ -232,7 +268,7 @@ int set_encrypition_all(struct inverter_info_t *firstinverter, char *key, int op
 	return 0;
 }
 
-int read_encrypition_key(char *id, char *key_ecu, char *buff_inv)		//读取逆变器的密钥信息
+int read_encrypition_key(char *id, char *key_ecu, char *buff_inv,char A139_flag)		//读取逆变器的密钥信息
 {
 	unsigned char sendbuff[512]={'\0'};
 	char readbuff[256];
@@ -330,7 +366,8 @@ int read_encrypition_key(char *id, char *key_ecu, char *buff_inv)		//读取逆�
 					if(0xFF != key[i])
 					{
 						sprintf(inverter_result, "%012s1END", id);
-						save_inverter_parameters_result_id(id, 139, inverter_result);
+						if(1 == A139_flag)
+							save_inverter_parameters_result_id(id, 139, inverter_result);
 						return 1;
 					}
 				}
@@ -340,7 +377,8 @@ int read_encrypition_key(char *id, char *key_ecu, char *buff_inv)		//读取逆�
 				if(strcmp(key_ecu, key))
 				{
 					sprintf(inverter_result, "%012s2END", id);
-					save_inverter_parameters_result_id(id, 139, inverter_result);
+					if(1 == A139_flag)
+						save_inverter_parameters_result_id(id, 139, inverter_result);
 					return 1;
 				}
 			}
@@ -369,7 +407,7 @@ int read_encrypition_all(struct inverter_info_t *firstinverter, char *key_ecu)		
 
 	for(i=0; (i<MAXINVERTERCOUNT)&&(12==strlen(inverter->inverterid)); i++, inverter++){
 		memset(buff_inv, '\0', sizeof(buff_inv));
-		read_encrypition_key(inverter->inverterid, key_ecu, buff_inv);
+		read_encrypition_key(inverter->inverterid, key_ecu, buff_inv,1);
 		count++;
 		strcat(buff_all, buff_inv);
 	}
@@ -389,7 +427,7 @@ int read_encrypition_all(struct inverter_info_t *firstinverter, char *key_ecu)		
 	return 0;
 }
 
-int clear_encrypition_key(char *id, char *buff_inv)		//给逆变器清空密钥
+int clear_encrypition_key(char *id, char *buff_inv,char A139_flag)		//给逆变器清空密钥
 {
 	unsigned char sendbuff[512]={'\0'};
 	char inverter_result[256]={'\0'};
@@ -478,6 +516,7 @@ int clear_encrypition_key(char *id, char *buff_inv)		//给逆变器清空密钥
 			{
 				save_encrypition_result(id, "", 2, 1);
 				sprintf(buff_inv, "%012s10END", id);
+				return 0;
 			}
 			else
 			{
@@ -485,9 +524,11 @@ int clear_encrypition_key(char *id, char *buff_inv)		//给逆变器清空密钥
 				sprintf(buff_inv, "%012s22END", id);
 
 				sprintf(inverter_result, "%012s0END", id);
-				save_inverter_parameters_result_id(id, 139, inverter_result);
+				if(1 == A139_flag)
+					save_inverter_parameters_result_id(id, 139, inverter_result);
+				return -1;
 			}
-			return 0;
+
 		}
 		else
 		{
@@ -498,15 +539,16 @@ int clear_encrypition_key(char *id, char *buff_inv)		//给逆变器清空密钥
 	sprintf(buff_inv, "%012s32END", id);
 
 	sprintf(inverter_result, "%012s0END", id);
-	save_inverter_parameters_result_id(id, 139, inverter_result);
+	if(1 == A139_flag)
+		save_inverter_parameters_result_id(id, 139, inverter_result);
 
-	return 0;
+	return -1;
 }
 
 int clear_encrypition_all(struct inverter_info_t *firstinverter)		//清除所有逆变器的加密信息
 {
 	struct inverter_info_t *inverter = firstinverter;
-	int i, count=0;
+	int i, count=0,clear_count=0;
 	char buff_ema[65535]={'\0'};
 	char buff_all[65535]={'\0'};
 	char buff_inv[256]={'\0'};
@@ -514,7 +556,8 @@ int clear_encrypition_all(struct inverter_info_t *firstinverter)		//清除所有
 
 	for(i=0; (i<MAXINVERTERCOUNT)&&(12==strlen(inverter->inverterid)); i++, inverter++){
 		memset(buff_inv, '\0', sizeof(buff_inv));
-		clear_encrypition_key(inverter->inverterid, buff_inv);
+		if(0 == clear_encrypition_key(inverter->inverterid, buff_inv,1))
+			clear_count++;
 		count++;
 		strcat(buff_all, buff_inv);
 	}
@@ -522,7 +565,14 @@ int clear_encrypition_all(struct inverter_info_t *firstinverter)		//清除所有
 	if(count>0)
 	{
 		get_date_time(date_time);
-		sprintf(buff_ema, "%s%05d%s%s%012s1%04d%s%sEND%s", "APS13",(66+17*count),"A140","AAA0",ecuid, count, "00000000000000",date_time, buff_all);
+		if(clear_count == count)
+		{
+			sprintf(buff_ema, "%s%05d%s%s%012s3%04d%s%sEND%s", "APS13",(66+17*count),"A140","AAA0",ecuid, count, "00000000000000",date_time, buff_all);
+		}else
+		{
+			sprintf(buff_ema, "%s%05d%s%s%012s1%04d%s%sEND%s", "APS13",(66+17*count),"A140","AAA0",ecuid, count, "00000000000000",date_time, buff_all);
+		}
+
 //		printf("%s\n",buff_ema);
 		save_process_result(140, buff_ema);
 	}
@@ -599,14 +649,19 @@ int process_encrypition(struct inverter_info_t *firstinverter)
 	char *zErrMsg=0;
 	int nrow=0,ncolumn=0;
 	char **azResult;
+	char buff_ema[65535]={'\0'};
+	char buff_all[65535]={'\0'};
+	char date_time[16]={'\0'};
 	sqlite3 *db;
 	char buff_inv[256]={'\0'};
 	char key[16]={'\0'};
+	char flag_supple = 0,clear_flag = 0;
 	int operator, cmd=0;
 	struct inverter_info_t *inverter = firstinverter;
 	int i, j, exist, set_flag=0, read_flag=0;
 	FILE *fp;
 	char flag[2]={'\0'};
+	int count =0;
 
 	fp = fopen("/etc/yuneng/encryption.conf", "r");	//读取配置文件
 	if(fp)
@@ -659,35 +714,184 @@ int process_encrypition(struct inverter_info_t *firstinverter)
 		read_encrypition_all(firstinverter, key);
 
 	strcpy(sql, "SELECT id,status FROM info");
+	flag_supple = 0;
 	if(SQLITE_OK == sqlite3_get_table( db , sql , &azResult , &nrow , &ncolumn , &zErrMsg ))
 	{
-		for(i=0; (i<MAXINVERTERCOUNT)&&(12==strlen(inverter->inverterid))&&('1' == inverter->flag); i++, inverter++)
+		for(i=0; (i<MAXINVERTERCOUNT)&&(12==strlen(inverter->inverterid)); i++, inverter++)
 		{
+			memset(buff_inv,0x00,sizeof(buff_inv));
 			exist = 0;
-			for(j=1; j<=nrow; j++)
+			if('1' == inverter->flag)
 			{
-				if(!strcmp(inverter->inverterid, azResult[j*ncolumn]))
+				for(j=1; j<=nrow; j++)
 				{
-					exist = 1;
-					if((!azResult[j*ncolumn+1]) || (cmd != atoi(azResult[j*ncolumn+1])))		//逆变器的信息已存在，如果逆变器的加密信息和最后一次操作不一致，需要重新操作。
+					if(!strcmp(inverter->inverterid, azResult[j*ncolumn]))
 					{
-						if(1 == cmd)
-							set_encrypition_key(inverter->inverterid, key, buff_inv);
-						if(2 == cmd)
-							clear_encrypition_key(inverter->inverterid, buff_inv);
+						exist = 1;
+						//存在逆变器，并且info表中的CMD和KEY表中的不同
+						if((!azResult[j*ncolumn+1]) || (cmd != atoi(azResult[j*ncolumn+1])))		//逆变器的信息已存在，如果逆变器的加密信息和最后一次操作不一致，需要重新操作。
+						{
+							if(1 == cmd)
+							{
+								if(0 == set_encrypition_key(inverter->inverterid, key, buff_inv,0))
+								{
+									flag_supple = 1;
+								}
+							}
+							if(2 == cmd)
+							{
+								if(0 == clear_encrypition_key(inverter->inverterid, buff_inv,0))
+								{
+									flag_supple = 2;
+								}else
+								{
+									clear_flag = 1;
+								}
+							}
+
+						}else //存在逆变器，并且info表中的CMD和KEY表中的不同
+						{
+							if(atoi(azResult[j*ncolumn+1]) == 1)
+							{
+								sprintf(buff_inv, "%012s11END", inverter->inverterid);
+							}else if (atoi(azResult[j*ncolumn+1]) == 2)
+							{
+								sprintf(buff_inv, "%012s10END", inverter->inverterid);
+							}else
+							{
+								sprintf(buff_inv, "%012s22END", inverter->inverterid);
+							}
+
+						}
+						break;
 					}
-					break;
 				}
+				if(0 == exist)		//逆变器的加密信息不存在，需要重新读取。
+				{
+					read_encrypition_key(inverter->inverterid, key, buff_inv,0);
+				}
+
 			}
-			if(0 == exist)		//逆变器的加密信息不存在，需要重新读取。
-			{
-				read_encrypition_key(inverter->inverterid, key, buff_inv);
-			}
+			count++;
+			strcat(buff_all, buff_inv);
 		}
 	}
+
+	if(flag_supple == 1)
+	{
+		get_date_time(date_time);
+
+		sprintf(buff_ema, "%s%05d%s%s%012s0%00d%s%sEND%s", "APS13",(66+17*count),"A140","AAA0",ecuid, count, "00000000000000",date_time, buff_all);
+//		printf("%s\n",buff_ema);
+		save_process_result(140, buff_ema);
+	}else if (flag_supple == 2)
+	{
+		get_date_time(date_time);
+		if(clear_flag == 0)
+		{
+			sprintf(buff_ema, "%s%05d%s%s%012s3%04d%s%sEND%s", "APS13",(66+17*count),"A140","AAA0",ecuid, count, "00000000000000",date_time, buff_all);
+		}else
+		{
+			sprintf(buff_ema, "%s%05d%s%s%012s0%04d%s%sEND%s", "APS13",(66+17*count),"A140","AAA0",ecuid, count, "00000000000000",date_time, buff_all);
+		}
+//		printf("%s\n",buff_ema);
+		save_process_result(140, buff_ema);
+	}
+
 	sqlite3_free_table( azResult );
 
 	sqlite3_close(db);
 
 	return 0;
+}
+
+int save_Alarm(char *id,int time)
+{
+
+	char sql[1024]={'\0'};
+	char *zErrMsg=0;
+	sqlite3 *db=NULL;
+
+	memset(sql, '\0', sizeof(sql));
+	if(SQLITE_OK != sqlite3_open("/home/encryption.db", &db))
+		return -1;
+
+	sprintf(sql, "REPLACE into alarm(id,time) values('%s' ,%d) ", id, time);
+	sqlite3_exec_3times(db, sql);
+
+	sqlite3_close( db );
+
+	return 0;
+}
+
+int select_info(char *id,int *encryption_status)
+{
+	int i =0;
+	char sql[1024]={'\0'};
+	char *zErrMsg=0;
+	int nrow=0,ncolumn=0;
+	char **azResult;
+	sqlite3 *db=NULL;
+
+
+	if(SQLITE_OK != sqlite3_open("/home/encryption.db", &db))
+	{
+		*encryption_status = 3;
+		return -1;
+	}
+
+
+	//查询时间，并更新最后一次连接逆变器的时间
+	memset(sql, '\0', sizeof(sql));
+	sprintf(sql, "SELECT status FROM info where id = '%s'",id);
+	if(SQLITE_OK == sqlite3_get_table( db , sql , &azResult , &nrow , &ncolumn , &zErrMsg ))
+	{
+		*encryption_status = atoi(azResult[1]);
+	}else
+	{
+		*encryption_status = 3;
+	}
+
+	sqlite3_close( db );
+	return 0;
+}
+
+int process_encryption_alarm(struct inverter_info_t *firstinverter)
+{
+	int curTime = 0,i=0;
+	struct inverter_info_t *curinverter = firstinverter;
+	char inverter_result[256]={'\0'};
+	char buff_ema[65535]={'\0'};
+	char date_time[16]={'\0'};
+	int encryption_status;
+	curTime = time(NULL);
+	//判断通信状态，如果通信
+
+
+	for(i=0; (i<MAXINVERTERCOUNT)&&(12==strlen(curinverter->inverterid)); i++){		//每个逆变器要一次数据
+		if('1' == curinverter->flag)	// 能通讯上，更新到最新的时间
+		{
+			//如果和之前那次的时间相差86400秒，上报一条A140
+			if(curTime - curinverter->connect_time > 86400)
+			{
+				get_date_time(date_time);
+				select_info(curinverter->inverterid,&encryption_status);
+				sprintf(buff_ema, "%s%05d%s%s%012s0%00d%s%sEND%012s1%1dEND", "APS13",(66+17),"A140","AAA0",ecuid, 1, "00000000000000",date_time, curinverter->inverterid,encryption_status);
+			}
+
+			//只要通信上了就更新数据库时间
+			save_Alarm(curinverter->inverterid,curTime);
+			curinverter->connect_time = curTime;
+		}else	//不能通讯上
+		{
+			//如果和之前的时间相差86400秒，上报一条A139
+			if(curTime - curinverter->connect_time > 86400)
+			{
+				sprintf(inverter_result, "%012s3END", curinverter->inverterid);
+				save_inverter_parameters_result_id(curinverter->inverterid, 139, inverter_result);
+			}
+		}
+
+		curinverter++;
+	}
 }

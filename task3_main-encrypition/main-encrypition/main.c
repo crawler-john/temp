@@ -112,7 +112,7 @@ int initinverter(int plcmodem, sqlite3 *db, char *ccid, struct inverter_info_t *
 
 		inverter->fill_up_data_flag=0;
 		inverter->processed_paras_changed_flag = 0;
-
+		inverter->connect_time = time(NULL);
 		inverter++;
 	}
 	
@@ -1047,6 +1047,7 @@ int main(int argc, char *argv[])
 	//sendalamcmd(plcmodem, ccuid, tnuid, 0xd0);
 	
 	maxcount = initinverter(plcmodem, db, ccuid, inverter);		//初始化每个逆变器
+	initEncryption(inverter);
 	ltgeneration=get_lifetime_power(db);				//从数据库中读取系统历史发电量
 	disparameters(transflag, systempower, ltgeneration, curcount, maxcount);		//显示各个参数
 	show_data_on_lcd(systempower, ltgeneration, curcount, maxcount);
@@ -1079,8 +1080,8 @@ int main(int argc, char *argv[])
 
 
 	while(1){
-		//if((durabletime-thistime)>=reportinterval){
-		if((durabletime-thistime)>60){
+		if((durabletime-thistime)>=reportinterval){
+		//if((durabletime-thistime)>60){
 			thistime = time(NULL);
 		printmsg("------------------------------------------------------------------->");
 
@@ -1178,6 +1179,7 @@ int main(int argc, char *argv[])
 		process_protect_parameters(inverter);
 		process_paras_changed(inverter);
 		process_encrypition(inverter);
+		process_encryption_alarm(inverter);
 		get_all_signal_strength(inverter);
 		get_inverter_version_single();
 		update_inverter();
@@ -1212,7 +1214,7 @@ int main(int argc, char *argv[])
 		else
 			reportinterval = durabletime-thistime;
 
-	//	durabletime = fill_up_data(inverter,(reportinterval+300+thistime),thistime);
+		durabletime = fill_up_data(inverter,(reportinterval+300+thistime),thistime);
 
 	}
 
