@@ -1,0 +1,24 @@
+此版本主要增加了以下功能：
+1.将ECU的id表中的逆变器设置到任意的信道。
+2.将ECU的id表中的逆变器还原为默认信道。
+
+
+修改的文件：
+1.channel.c
+新增单独的修改信道功能
+
+2.zigbee.c
+修改：
+zb_turnon_limited_rtpid 整理程序逻辑
+process_all 整理程序逻辑
+
+新增
+zb_change_inverter_channel_one
+zb_change_channel
+zb_reset_channel 
+zb_off_report_id_and_bind
+
+3.main.c
+暂时取消：
+bind_nodata_inverter(inverter);对于轮询没有数据的逆变器进行绑定操作,绑定操作里面包含了获取短地址的命令
+
