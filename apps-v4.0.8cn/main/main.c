@@ -1203,7 +1203,10 @@ int main(int argc, char *argv[])
 		if(0 == maxcount)					//如果系统中没有逆变器上传数据，等待1s
 			sleep(1);}
 		else
+		{
+			checkHeartBeat();	//在等待的情况下，检测是否到达心跳时间
 			sleep(1);
+		}
 
 		if(curcount > 0)
 			process_all(inverter);
