@@ -1,0 +1,11 @@
+CC = arm-linux-gcc
+#CC = arm-none-linux-gnueabi-gcc
+src = idwriter.c
+obj = idwriter
+CFLAGS = -lsqlite3 -ldl -lpthread -I include/ -L lib/
+
+$(obj):$(src)
+	$(CC) -o $(obj) $(src) $(CFLAGS)
+
+clean:
+	rm $(obj)
