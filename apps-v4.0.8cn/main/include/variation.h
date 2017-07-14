@@ -104,8 +104,10 @@ struct inverter_info_t{
 	int fill_up_data_flag;							//逆变器是否有补数据功能的标志位，1为有功能,2为没有功能，默认0为没有响应或者第一次
 
 	char processed_paras_changed_flag;		//ECU每天对参数突变的逆变器处理，处理后标志为1，没有处理标志为0；(上报)
+	int connect_time;	//最后一次连接逆变器成功的时间
 	char processed_paras_changed_set_flag;		//ECU每天对参数突变的逆变器处理，处理后标志为1，没有处理标志为0；(设置)
 
 	int updating_flag; 						//逆变器正在升级的标志，1代表在升级
+	
 };
 

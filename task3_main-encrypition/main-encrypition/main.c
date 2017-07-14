@@ -113,6 +113,7 @@ int initinverter(int plcmodem, sqlite3 *db, char *ccid, struct inverter_info_t *
 		inverter->fill_up_data_flag=0;
 		inverter->processed_paras_changed_flag = 0;
 		inverter->connect_time = time(NULL);
+		
 		inverter++;
 	}
 	
@@ -1180,6 +1181,7 @@ int main(int argc, char *argv[])
 		process_paras_changed(inverter);
 		process_encrypition(inverter);
 		process_encryption_alarm(inverter);
+		
 		get_all_signal_strength(inverter);
 		get_inverter_version_single();
 		update_inverter();

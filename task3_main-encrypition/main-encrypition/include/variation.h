@@ -105,5 +105,6 @@ struct inverter_info_t{
 
 	char processed_paras_changed_flag;		//ECU每天对参数突变的逆变器处理，处理后标志为1，没有处理标志为0；
 	int connect_time;	//最后一次连接逆变器成功的时间
+	
 };
 

@@ -122,6 +122,29 @@ int operation_db_init()
 	return 0;
 }
 
+int encrypition_init()
+{
+	char sql[1024]={'\0'};
+	sqlite3 *db;
+
+	sqlite3_open("/home/encryption.db", &db);
+
+	strcpy(sql, "CREATE TABLE IF NOT EXISTS key (item INTEGER PRIMARY KEY, key VARCHAR(256), operator INTEGER, "
+			"set_flag INTEGER , cmd INTEGER, read_flag INTEGER)");
+	sqlite3_exec_3times(db, sql);
+
+	strcpy(sql, "CREATE TABLE IF NOT EXISTS info (id VARCHAR(256) PRIMARY KEY, key VARCHAR(256), operator INTEGER, "
+			"status INTEGER, result INTEGER)");
+	sqlite3_exec_3times(db, sql);
+
+	strcpy(sql, "CREATE TABLE IF NOT EXISTS alarm (id VARCHAR(256) PRIMARY KEY, time INTEGER)");
+	sqlite3_exec_3times(db, sql);
+
+	sqlite3_close(db);
+
+	return 0;
+}
+
 int sqlite3_exec_3times(sqlite3 *db, char *sql)
 {
 	int i;
