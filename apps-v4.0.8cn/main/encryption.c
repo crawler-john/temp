@@ -3,12 +3,13 @@
 #include <string.h>
 #include "sqlite3.h"
 #include "variation.h"
-#include "encrypition.h"
+#include "encryption.h"
 #include "debug.h"
 
 extern int plcmodem;		//PLC的文件描述符
 extern unsigned char ccuid[7];		//ECU3501的ID
 extern char ecuid[13];			//ECU的ID
+int LastHeartTime = 0;
 
 char key_global[16]={'\0'};
 
@@ -27,7 +28,6 @@ int initEncryption(struct inverter_info_t *firstinverter)
 
 	if(SQLITE_OK != sqlite3_open("/home/encryption.db", &db))
 		return -1;
-
 	for(i=0; (i<MAXINVERTERCOUNT)&&(12==strlen(curinverter->inverterid)); i++){		//每个逆变器要一次数据
 
 		//查询时间，并更新最后一次连接逆变器的时间
@@ -35,9 +35,9 @@ int initEncryption(struct inverter_info_t *firstinverter)
 		sprintf(sql, "SELECT time FROM alarm where id = '%s'",curinverter->inverterid);
 		if(SQLITE_OK == sqlite3_get_table( db , sql , &azResult , &nrow , &ncolumn , &zErrMsg ))
 		{
-			curinverter->connect_time = atoi(azResult[1]);
+			if(nrow !=0)
+				curinverter->connect_time = atoi(azResult[1]);
 		}
-
 		curinverter++;
 	}
 	sqlite3_close( db );
@@ -46,7 +46,7 @@ int initEncryption(struct inverter_info_t *firstinverter)
 
 
 
-int save_encrypition_result(char *id, char *key, int status, int result)					//更新逆变器的密钥信息
+int save_encryption_result(char *id, char *key, int status, int result)					//更新逆变器的密钥信息
 {
 	char sql[1024]={'\0'};
 	char *zErrMsg=0;
@@ -64,7 +64,7 @@ int save_encrypition_result(char *id, char *key, int status, int result)					//�
 	return 0;
 }
 
-int save_encrypition_key(char *id, char *key)					//读取密钥
+int save_encryption_key(char *id, char *key)					//读取密钥
 {
 	char sql[1024]={'\0'};
 	char *zErrMsg=0;
@@ -118,7 +118,7 @@ int clear_read_flag()		//清除数据库中的读取标志
 	return 0;
 }
 
-int set_encrypition_key(char *id, char *key, char *buff_inv,char A139_flag)	//给逆变器添加密钥
+int set_encryption_key(char *id, char *key, char *buff_inv,char A139_flag)	//给逆变器添加密钥
 {
 	unsigned char sendbuff[512]={'\0'};
 	char inverter_result[256]={'\0'};
@@ -168,7 +168,7 @@ int set_encrypition_key(char *id, char *key, char *buff_inv,char A139_flag)	//�
 	sendbuff[34] = 0xFE;		//TAIL
 	sendbuff[35] = 0xFE;		//TAIL
 
-	printhexmsg("Set Encrypition Key", sendbuff, 36);
+	printhexmsg("Set Encryption Key", sendbuff, 36);
 
 	for(i=0; i<3; i++){
 		write(plcmodem, sendbuff, 36);
@@ -203,16 +203,16 @@ int set_encrypition_key(char *id, char *key, char *buff_inv,char A139_flag)	//�
 				(readbuff[34] == 0xFE) &&
 				(readbuff[35] == 0xFE)
 			){
-			print2msg(id, "Set Encrypition Key successfully");
+			print2msg(id, "Set Encryption Key successfully");
 			if(0x00 == readbuff[22])
 			{
-				save_encrypition_result(id, key, 1, 1);
+				save_encryption_result(id, key, 1, 1);
 				sprintf(buff_inv, "%012s11END", id);
 				return 0;
 			}
 			else
 			{
-//				save_encrypition_result(id, key, 0, 2);
+//				save_encryption_result(id, key, 0, 2);
 				sprintf(buff_inv, "%012s22END", id);
 
 				sprintf(inverter_result, "%012s0END", id);
@@ -223,10 +223,10 @@ int set_encrypition_key(char *id, char *key, char *buff_inv,char A139_flag)	//�
 		}
 		else
 		{
-			print2msg(id, "Failed to Set Encrypition Key");
+			print2msg(id, "Failed to Set Encryption Key");
 		}
 	}
-//	save_encrypition_result(id, key, 0, 3);
+//	save_encryption_result(id, key, 0, 3);
 	sprintf(buff_inv, "%012s32END", id);
 
 	sprintf(inverter_result, "%012s0END", id);
@@ -236,7 +236,7 @@ int set_encrypition_key(char *id, char *key, char *buff_inv,char A139_flag)	//�
 	return 1;
 }
 
-int set_encrypition_all(struct inverter_info_t *firstinverter, char *key, int operator)		//设置所有逆变器的加密信息
+int set_encryption_all(struct inverter_info_t *firstinverter, char *key, int operator)		//设置所有逆变器的加密信息
 {
 	struct inverter_info_t *inverter = firstinverter;
 	int i, count=0;
@@ -247,7 +247,7 @@ int set_encrypition_all(struct inverter_info_t *firstinverter, char *key, int op
 
 	for(i=0; (i<MAXINVERTERCOUNT)&&(12==strlen(inverter->inverterid)); i++, inverter++){
 		memset(buff_inv, '\0', sizeof(buff_inv));
-		set_encrypition_key(inverter->inverterid, key, buff_inv,1);
+		set_encryption_key(inverter->inverterid, key, buff_inv,1);
 		count++;
 		strcat(buff_all, buff_inv);
 	}
@@ -268,7 +268,7 @@ int set_encrypition_all(struct inverter_info_t *firstinverter, char *key, int op
 	return 0;
 }
 
-int read_encrypition_key(char *id, char *key_ecu, char *buff_inv,char A139_flag)		//读取逆变器的密钥信息
+int read_encryption_key(char *id, char *key_ecu, char *buff_inv,char A139_flag)		//读取逆变器的密钥信息
 {
 	unsigned char sendbuff[512]={'\0'};
 	char readbuff[256];
@@ -319,7 +319,7 @@ int read_encrypition_key(char *id, char *key_ecu, char *buff_inv,char A139_flag)
 	sendbuff[34] = 0xFE;		//TAIL
 	sendbuff[35] = 0xFE;		//TAIL
 
-	printhexmsg("Read Encrypition Key", sendbuff, 36);
+	printhexmsg("Read Encryption Key", sendbuff, 36);
 
 	for(i=0; i<3; i++){
 		write(plcmodem, sendbuff, 36);
@@ -353,10 +353,10 @@ int read_encrypition_key(char *id, char *key_ecu, char *buff_inv,char A139_flag)
 				(readbuff[34] == 0xFE) &&
 				(readbuff[35] == 0xFE)
 			){
-			print2msg(id, "Read Encrypition Key successfully");
+			print2msg(id, "Read Encryption Key successfully");
 			for(i=0; i<8; i++)
 				key[i] = readbuff[24+i];
-			save_encrypition_key(id, key);
+			save_encryption_key(id, key);
 			sprintf(buff_inv, "%012s0%01dEND", id, readbuff[22]);
 
 			if(!strlen(key_ecu))
@@ -387,16 +387,16 @@ int read_encrypition_key(char *id, char *key_ecu, char *buff_inv,char A139_flag)
 		}
 		else
 		{
-			print2msg(id, "Failed to Read Encrypition Key");
+			print2msg(id, "Failed to Read Encryption Key");
 		}
 	}
 	sprintf(buff_inv, "%012s02END", id, readbuff[22]);
-//	save_encrypition_result(id, key, 0, 3);
+//	save_encryption_result(id, key, 0, 3);
 
 	return 0;
 }
 
-int read_encrypition_all(struct inverter_info_t *firstinverter, char *key_ecu)		//读取所有逆变器的加密信息
+int read_encryption_all(struct inverter_info_t *firstinverter, char *key_ecu)		//读取所有逆变器的加密信息
 {
 	struct inverter_info_t *inverter = firstinverter;
 	int i, count=0;
@@ -407,7 +407,7 @@ int read_encrypition_all(struct inverter_info_t *firstinverter, char *key_ecu)		
 
 	for(i=0; (i<MAXINVERTERCOUNT)&&(12==strlen(inverter->inverterid)); i++, inverter++){
 		memset(buff_inv, '\0', sizeof(buff_inv));
-		read_encrypition_key(inverter->inverterid, key_ecu, buff_inv,1);
+		read_encryption_key(inverter->inverterid, key_ecu, buff_inv,1);
 		count++;
 		strcat(buff_all, buff_inv);
 	}
@@ -427,7 +427,7 @@ int read_encrypition_all(struct inverter_info_t *firstinverter, char *key_ecu)		
 	return 0;
 }
 
-int clear_encrypition_key(char *id, char *buff_inv,char A139_flag)		//给逆变器清空密钥
+int clear_encryption_key(char *id, char *buff_inv,char A139_flag)		//给逆变器清空密钥
 {
 	unsigned char sendbuff[512]={'\0'};
 	char inverter_result[256]={'\0'};
@@ -477,7 +477,7 @@ int clear_encrypition_key(char *id, char *buff_inv,char A139_flag)		//给逆变�
 	sendbuff[34] = 0xFE;		//TAIL
 	sendbuff[35] = 0xFE;		//TAIL
 
-	printhexmsg("Clear Encrypition Key", sendbuff, 36);
+	printhexmsg("Clear Encryption Key", sendbuff, 36);
 
 	for(i=0; i<3; i++){
 		write(plcmodem, sendbuff, 36);
@@ -511,16 +511,16 @@ int clear_encrypition_key(char *id, char *buff_inv,char A139_flag)		//给逆变�
 				(readbuff[34] == 0xFE) &&
 				(readbuff[35] == 0xFE)
 			){
-			print2msg(id, "Clear Encrypition Key successfully");
+			print2msg(id, "Clear Encryption Key successfully");
 			if(0x00 == readbuff[22])
 			{
-				save_encrypition_result(id, "", 2, 1);
+				save_encryption_result(id, "", 2, 1);
 				sprintf(buff_inv, "%012s10END", id);
 				return 0;
 			}
 			else
 			{
-//				save_encrypition_result(id, key, 0, 2);
+//				save_encryption_result(id, key, 0, 2);
 				sprintf(buff_inv, "%012s22END", id);
 
 				sprintf(inverter_result, "%012s0END", id);
@@ -532,10 +532,10 @@ int clear_encrypition_key(char *id, char *buff_inv,char A139_flag)		//给逆变�
 		}
 		else
 		{
-			print2msg(id, "Failed to Clear Encrypition Key");
+			print2msg(id, "Failed to Clear Encryption Key");
 		}
 	}
-//	save_encrypition_result(id, key, 0, 3);
+//	save_encryption_result(id, key, 0, 3);
 	sprintf(buff_inv, "%012s32END", id);
 
 	sprintf(inverter_result, "%012s0END", id);
@@ -545,7 +545,7 @@ int clear_encrypition_key(char *id, char *buff_inv,char A139_flag)		//给逆变�
 	return -1;
 }
 
-int clear_encrypition_all(struct inverter_info_t *firstinverter)		//清除所有逆变器的加密信息
+int clear_encryption_all(struct inverter_info_t *firstinverter)		//清除所有逆变器的加密信息
 {
 	struct inverter_info_t *inverter = firstinverter;
 	int i, count=0,clear_count=0;
@@ -556,7 +556,7 @@ int clear_encrypition_all(struct inverter_info_t *firstinverter)		//清除所有
 
 	for(i=0; (i<MAXINVERTERCOUNT)&&(12==strlen(inverter->inverterid)); i++, inverter++){
 		memset(buff_inv, '\0', sizeof(buff_inv));
-		if(0 == clear_encrypition_key(inverter->inverterid, buff_inv,1))
+		if(0 == clear_encryption_key(inverter->inverterid, buff_inv,1))
 			clear_count++;
 		count++;
 		strcat(buff_all, buff_inv);
@@ -582,7 +582,7 @@ int clear_encrypition_all(struct inverter_info_t *firstinverter)		//清除所有
 	return 0;
 }
 
-int encrypition_heartbeat()		//防盗系统的心跳包，在每次大轮询前广播发送给所有逆变器，在plc.c中调用
+int encryption_heartbeat()		//防盗系统的心跳包，在每次大轮询前广播发送给所有逆变器，在plc.c中调用
 {
 	unsigned char sendbuff[512]={'\0'};
 	unsigned short check=0x00;
@@ -633,9 +633,10 @@ int encrypition_heartbeat()		//防盗系统的心跳包，在每次大轮询前�
 	sendbuff[34] = 0xFE;		//TAIL
 	sendbuff[35] = 0xFE;		//TAIL
 
-	printhexmsg("Encrypition Heartbeat", sendbuff, 36);
+	printhexmsg("Encryption Heartbeat", sendbuff, 36);
 
 	write(plcmodem, sendbuff, 36);
+	LastHeartTime = time(NULL);
 	sleep(10);
 
 	return 0;
@@ -643,7 +644,7 @@ int encrypition_heartbeat()		//防盗系统的心跳包，在每次大轮询前�
 
 //加密功能入口，从数据库中读取key表中的信息，如果有设置、清除、读取加密信息，先所有逆变器统一处理。然后查漏补缺，没有信息的逆变器，重新读取加密信息，如果逆变器的加密
 //信息和最后一次操作不符合，单独再设置或清除加密
-int process_encrypition(struct inverter_info_t *firstinverter)
+int process_encryption(struct inverter_info_t *firstinverter)
 {
 	char sql[1024] = {'\0'};
 	char *zErrMsg=0;
@@ -704,14 +705,14 @@ int process_encrypition(struct inverter_info_t *firstinverter)
 	{
 		if(1 == cmd)		//设置加密
 		{
-			set_encrypition_all(firstinverter, key, operator);
+			set_encryption_all(firstinverter, key, operator);
 		}
 		if(2 == cmd)		//清除加密
-			clear_encrypition_all(firstinverter);
+			clear_encryption_all(firstinverter);
 	}
 
 	if(1 == read_flag)		//读取逆变器信息
-		read_encrypition_all(firstinverter, key);
+		read_encryption_all(firstinverter, key);
 
 	strcpy(sql, "SELECT id,status FROM info");
 	flag_supple = 0;
@@ -733,14 +734,14 @@ int process_encrypition(struct inverter_info_t *firstinverter)
 						{
 							if(1 == cmd)
 							{
-								if(0 == set_encrypition_key(inverter->inverterid, key, buff_inv,0))
+								if(0 == set_encryption_key(inverter->inverterid, key, buff_inv,0))
 								{
 									flag_supple = 1;
 								}
 							}
 							if(2 == cmd)
 							{
-								if(0 == clear_encrypition_key(inverter->inverterid, buff_inv,0))
+								if(0 == clear_encryption_key(inverter->inverterid, buff_inv,0))
 								{
 									flag_supple = 2;
 								}else
@@ -768,7 +769,7 @@ int process_encrypition(struct inverter_info_t *firstinverter)
 				}
 				if(0 == exist)		//逆变器的加密信息不存在，需要重新读取。
 				{
-					read_encrypition_key(inverter->inverterid, key, buff_inv,0);
+					read_encryption_key(inverter->inverterid, key, buff_inv,0);
 				}
 
 			}
@@ -864,9 +865,21 @@ int process_encryption_alarm(struct inverter_info_t *firstinverter)
 	char buff_ema[65535]={'\0'};
 	char date_time[16]={'\0'};
 	int encryption_status;
+	char flag[2]={'\0'};
+	FILE *fp;
 	curTime = time(NULL);
 	//判断通信状态，如果通信
+	fp = fopen("/etc/yuneng/encryption.conf", "r");	//读取配置文件
+	if(fp)
+	{
+		fgets(flag, sizeof(flag), fp);
+		fclose(fp);
 
+		if('1' != flag[0])	//没有开启，直接返回。
+			return 0;
+	}
+	else	//文件不存在，说明没有加密功能，直接返回。
+		return 0;
 
 	for(i=0; (i<MAXINVERTERCOUNT)&&(12==strlen(curinverter->inverterid)); i++){		//每个逆变器要一次数据
 		if('1' == curinverter->flag)	// 能通讯上，更新到最新的时间

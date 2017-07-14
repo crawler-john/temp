@@ -12,3 +12,4 @@ int get_protect_parameters(int *max_vol, int *min_vol, int *max_fre, int *min_fr
 int save_process_result(int item, char *result);
 int save_inverter_parameters_result(struct inverter_info_t *inverter, int item, char *inverter_result);
 int save_inverter_parameters_result_id(char *id, int item, char *inverter_result);
+int encryption_init(void);

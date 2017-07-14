@@ -122,7 +122,7 @@ int operation_db_init()
 	return 0;
 }
 
-int encrypition_init()
+int encryption_init(void)
 {
 	char sql[1024]={'\0'};
 	sqlite3 *db;
@@ -137,7 +137,7 @@ int encrypition_init()
 			"status INTEGER, result INTEGER)");
 	sqlite3_exec_3times(db, sql);
 
-	strcpy(sql, "CREATE TABLE IF NOT EXISTS alarm (id VARCHAR(256) PRIMARY KEY, time INTEGER)");
+	strcpy(sql, "CREATE TABLE IF NOT EXISTS alarm (id VARCHAR(256) PRIMARY KEY, time BIGINT)");
 	sqlite3_exec_3times(db, sql);
 
 	sqlite3_close(db);

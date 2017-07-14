@@ -12,6 +12,7 @@
 #include "debug.h"
 #include "database.h"
 #include "fill_up_data.h"
+#include "encryption.h"
 
 #define BAUDRATE B9600
 #define MODEMDEVICE "/dev/ttyO2"	//9G45上的UART1
@@ -25,6 +26,9 @@ extern unsigned char ccuid[7];		//ECU3501的ID
 extern sqlite3 *db;			//数据库
 extern sqlite3 *tmpdb;
 extern int afdflag;	//逆变器AFD对齐
+extern int LastHeartTime;
+int HeartIntervalTime = 300;
+
 
 extern int processpower(struct inverter_info_t *firstinverter);
 
@@ -306,6 +310,14 @@ int process_all(struct inverter_info_t *firstinverter)
 	//process_afd();
 }
 
+void checkHeartBeat()				//心跳检测，与上次心跳对比，检测是否超过心跳时间，如果超过心跳时间则重新发送一次心跳。
+{
+	if((time(NULL) - LastHeartTime) >=HeartIntervalTime)
+	{
+		encryption_heartbeat();
+	}
+}
+
 int getalldata(struct inverter_info_t *firstinverter, char *time, int time_linux)		//获取每个逆变器的数据
 {
 	int i, j, currentcount = 0;
@@ -315,8 +327,10 @@ int getalldata(struct inverter_info_t *firstinverter, char *time, int time_linux
 	sleep(5);
 	calibration_time_broadcast(firstinverter, time_linux);			//
 	sleep(10);
+	encryption_heartbeat();
 
 	for(i=0; (i<MAXINVERTERCOUNT)&&(12==strlen(curinverter->inverterid)); i++){		//每个逆变器要一次数据
+		checkHeartBeat();
 		process_all(firstinverter);
 		curinverter->curflag = '0';
 		if(0 == curinverter->configflag){
@@ -332,6 +346,7 @@ int getalldata(struct inverter_info_t *firstinverter, char *time, int time_linux
 	for(j=0; j<7; j++){
 		curinverter = firstinverter;
 		for(i=0; (i<MAXINVERTERCOUNT)&&(12==strlen(curinverter->inverterid)); i++){		//每个逆变器最多要5次数据
+			checkHeartBeat();
 			process_all(firstinverter);
 			if('0' == curinverter->curflag)
 				sendaskcmd(curinverter, time);

@@ -6,7 +6,7 @@
 
 #include "variation.h"
 
-//#define DEBUG
+#define DEBUG
 //#define DEBUGLOG
 
 #ifdef DEBUGLOG

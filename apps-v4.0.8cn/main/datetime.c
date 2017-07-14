@@ -107,3 +107,19 @@ void getdate(char date[10])		//获取日期，用于当天发电量，格式：�
 	sprintf(temp, "%d", record_time.tm_mday);
 	strcat(date,temp);
 }
+
+int get_date_time(char *date_time)              //发给EMA记录时获取的时间，格式>：年月日时分秒，如20120902142835
+{
+        time_t tm;
+        struct tm record_time;    //记录时间
+
+
+        time(&tm);
+        memcpy(&record_time, localtime(&tm), sizeof(record_time));
+
+        sprintf(date_time, "%04d%02d%02d%02d%02d%02d", record_time.tm_year+1900, record_time.tm_mon+1, record_time.tm_mday,
+                        record_time.tm_hour, record_time.tm_min, record_time.tm_sec);
+
+        return 0;
+}
+

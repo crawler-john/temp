@@ -17,6 +17,7 @@
 #include "process_protect_parameters.h"
 #include "check_data.h"
 #include "fill_up_data.h"
+#include "encryption.h"
 
 char displayip[20]={'\0'};		//液晶屏显示ECU IP Adress
 char displayconnect[5]={'\0'};			//液晶屏显示+/-WEB
@@ -1018,14 +1019,14 @@ int main(int argc, char *argv[])
 	record_db_init();
 	init_lost_data_info();	//初始化补数据结构体
 	operation_db_init();
-	encrypition_init();
-	
+	encryption_init();
+
 	//char data[6] = {0x01, 0x02, 0x03, 0x04, 0x05, '\0'};
 	fd_reset = open_reset();
 	close_reset(fd_reset);
 	getecuid(ecuid);	//获取ECU的ID
 	zoneflag = get_timezone();
-	
+
 	transflag = gettransflag();	//获取发送标志，判断是以太网还是GPRS
 	/*if(1==transflag){			//GPRS
 		transfd = opengprs();
@@ -1044,12 +1045,14 @@ int main(int argc, char *argv[])
 	printdecmsg("transflag", transflag);
 
 	plcmodem = openplc();		//打开PLC串口
+
 	while(-1==getccuid(plcmodem, ccuid))		//不停地读取ECU的3501的UID，直到读到为止
 		sleep(1);
 	//sendalamcmd(plcmodem, ccuid, tnuid, 0xd0);
-	
+
 	maxcount = initinverter(plcmodem, db, ccuid, inverter);		//初始化每个逆变器
 	initEncryption(inverter);
+
 	ltgeneration=get_lifetime_power(db);				//从数据库中读取系统历史发电量
 	disparameters(transflag, systempower, ltgeneration, curcount, maxcount);		//显示各个参数
 	show_data_on_lcd(systempower, ltgeneration, curcount, maxcount);
@@ -1066,7 +1069,6 @@ int main(int argc, char *argv[])
 		reportinterval = 900;
 	else
 		reportinterval = 1200;
-	
 	//button_pthread();				//开启菜单按键线程，按键开始工作
 	turn_on_serial();
 	system("killall button");
@@ -1084,7 +1086,7 @@ int main(int argc, char *argv[])
 //	sprintf(receivetimef,"20170515142801");
 //	if(1)
 //	{printf("a\t");save_system_power_single((float)(a+b),receivetimef);printf("a\t");}
-
+	process_encryption(inverter);
 	while(1){
 		if((durabletime-thistime)>=reportinterval){
 			thistime = time(NULL);
@@ -1183,7 +1185,7 @@ int main(int argc, char *argv[])
 		process_ird(inverter);
 //		process_protect_parameters(inverter);
 		process_paras_changed(inverter);
-		process_encrypition(inverter);
+		process_encryption(inverter);
 		process_encryption_alarm(inverter);
 //		process_paras_changed_set(inverter);
 		get_all_signal_strength(inverter);
